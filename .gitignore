@@ -225,3 +225,7 @@ npm-debug.log
 yarn-error.log
 
 # End of https://www.toptal.com/developers/gitignore/api/python,venv,dotenv,vuejs,jupyternotebooks,visualstudiocode
+### 프로젝트 ###
+# API 원문 캐시(연 11MB)와 벡터DB — build_climate.py로 다시 만든다
+data/raw/
+data/chroma/

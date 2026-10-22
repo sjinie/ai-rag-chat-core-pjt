@@ -68,27 +68,35 @@ Python 3.10+ · Streamlit 1.62.0 · LangChain 1.3.14 · LangGraph 1.2.10 · Lang
 - LLM은 SSAFY GMS 경유: `ChatOpenAI(model=..., api_key=GMS_KEY, base_url="https://gms.ssafy.io/gmsapi/api.openai.com/v1/")`. 모델명은 설정 파일에 둔다.
 - `.env` 키: `GMS_KEY`, `KMA_API_KEY`, `WIKI_CONTACT`(영문 이메일).
 
-## 예정 구조
+## 구조
+
+소스는 `code/`, 데이터는 `data/`. 스크립트는 `code/`에서 실행한다 (모듈 import 기준 경로).
 
 ```
-app.py                  # Streamlit UI (step7_skeleton.py에서 출발)
-config.toml             # chunk_size, chunk_overlap, top_k, search_type, 모델명
-domain/                 # 도메인 종속 코드는 여기만
-  kma.py                # API허브 호출 · 파싱
-  stations.py           # 지점 텍스트 구성, 위치→지점/격자 변환, 편차 계산
-  prompts.py            # 프롬프트 3개 (검색어 추출 / 후보 선별 / 답변 생성)
-rag/
-  wiki.py               # 위키 검색·본문 (step8 재사용)
-  store.py              # Chroma 컬렉션
-  collect.py            # 프롬프트1 → 검색 → 프롬프트2 → 수집 → 청킹·색인
-  graph.py              # LangGraph retrieve / generate
-scripts/build_index.py  # 10년 평균 계산 + station_meta 색인
-data/                   # 원천 데이터, sources.md
+code/
+  config.toml           # ✅ 모델명, 10년 기간·창 크기, Chroma 경로 (이후 chunk_size·top_k·search_type 추가)
+  config.py             # ✅ config.toml + 루트 .env 로드
+  build_climate.py      # ✅ 10년 일자료 수집 → 기준값 계산 → station_meta·weather_data 색인
+  app.py                # Streamlit UI (step7_skeleton.py에서 출발)
+  domain/               # 도메인 종속 코드는 여기만
+    kma.py              # ✅ API허브 호출·파싱 (원문은 data/raw에 캐시)
+    stations.py         # ✅ 지점→시/도 매핑, 10년 ±7일 기준값, 색인 텍스트
+    prompts.py          # 프롬프트 3개 (검색어 추출 / 후보 선별 / 답변 생성)
+  rag/
+    store.py            # ✅ Chroma 컬렉션, 없는 ID만 임베딩
+    wiki.py             # 위키 검색·본문 (step8 재사용)
+    collect.py          # 프롬프트1 → 검색 → 프롬프트2 → 수집 → 청킹·색인
+    graph.py            # LangGraph retrieve / generate
+data/
+  raw/                  # API 원문 캐시 (git 제외)
+  chroma/               # 벡터DB (git 제외)
+  sources.md            # 출처·이용 조건
 ```
 
 ## 작업 방식
 
-- 실행: `streamlit run app.py` / 색인: `python scripts/build_index.py`
+- 가상환경: 루트 `.venv` (`pip install -r requirements.txt`)
+- 실행(`code/`에서): 색인 `python build_climate.py` / 앱 `streamlit run app.py` / 자체 점검 `python domain/stations.py`
 - 새 로직(파싱, 편차 계산, 근거 번호 추출 등)에는 작은 assert 기반 검증을 남긴다.
 - 검증은 실행 결과로 증명한다 — 명세 4장 체크리스트(색인 수 일치, 재색인 시 청크 수 불변, 근거 번호와 표시 목록 일치, 키 없음/색인 없음 안내 등).
 - 커밋 메시지·문서는 한국어로 쓴다.
