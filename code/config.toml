@@ -1,0 +1,15 @@
+# 검색·색인 설정. 값을 바꿔 결과를 비교할 수 있도록 코드가 아니라 여기에 둔다. (F2005, F2006)
+
+[llm]
+base_url = "https://gms.ssafy.io/gmsapi/api.openai.com/v1/"
+chat_model = "gpt-5.4-nano"
+embedding_model = "text-embedding-3-small"
+
+[climate]
+start_year = 2016
+end_year = 2025
+window_days = 7          # 기준값 = 최근 10년 같은 날짜 ±7일 관측 평균
+
+[chroma]
+persist_dir = "data/chroma"
+embed_batch = 500        # 임베딩 요청 1회에 보내는 문서 수
