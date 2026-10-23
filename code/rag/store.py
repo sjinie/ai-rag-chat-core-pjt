@@ -5,16 +5,18 @@ from langchain_openai import OpenAIEmbeddings
 from config import CONFIG, ROOT, require_env
 
 
-def get_store(collection: str) -> Chroma:
-    embeddings = OpenAIEmbeddings(
-        model=CONFIG["llm"]["embedding_model"],
-        api_key=require_env("GMS_KEY"),
-        base_url=CONFIG["llm"]["base_url"],
-    )
+def get_store(collection: str, embeddings=None, persist_dir: str | None = None) -> Chroma:
+    """기본은 GMS 임베딩과 config의 경로. 테스트는 가짜 임베딩과 임시 경로를 넘긴다."""
+    if embeddings is None:
+        embeddings = OpenAIEmbeddings(
+            model=CONFIG["llm"]["embedding_model"],
+            api_key=require_env("GMS_KEY"),
+            base_url=CONFIG["llm"]["base_url"],
+        )
     return Chroma(
         collection_name=collection,
         embedding_function=embeddings,
-        persist_directory=str(ROOT / CONFIG["chroma"]["persist_dir"]),
+        persist_directory=persist_dir or str(ROOT / CONFIG["chroma"]["persist_dir"]),
     )
 
 
