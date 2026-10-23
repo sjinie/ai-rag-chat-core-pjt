@@ -14,10 +14,11 @@ class FakeKma:
     """request_kma 대체. 요청 파라미터를 기록하고, 구간 안의 발표분만 돌려준다."""
 
     def __init__(self, issues: dict[str, str]):
-        self.issues, self.requests = issues, []
+        self.issues, self.requests, self.options = issues, [], []
 
-    def __call__(self, path, params):
+    def __call__(self, path, params, **options):
         self.requests.append(params)
+        self.options.append(options)
         lo, hi = params["tmfc1"], params["tmfc2"]
         return "#START7777\n" + "".join(block("156", t, b) for t, b in self.issues.items() if lo <= t <= hi)
 
@@ -39,6 +40,15 @@ class LatestForecastTest(unittest.TestCase):
             f = fetch_latest_forecast("156", datetime(2026, 10, 24, 3, 0))
         self.assertEqual((kma.requests[0]["tmfc1"], kma.requests[0]["tmfc2"]), ("202610231700", "202610231700"))
         self.assertEqual(f["tmfc"], "202610231700")
+        # 전날 17시 개황의 '오늘'은 어제다. 그 개황의 '내일' 문단이 오늘이다
+        self.assertEqual(f["summary"], "○ (오늘) 맑음")
+
+    def test_live_forecast_call_is_short(self):
+        kma = FakeKma({"202610241100": BODY})
+        with patch("domain.kma.request_kma", kma):
+            fetch_latest_forecast("156", datetime(2026, 10, 24, 15, 0))
+        self.assertLessEqual(kma.options[0]["timeout"], 15)  # 질문 처리 중 호출은 빌드용(180초×4회)보다 짧게
+        self.assertLessEqual(kma.options[0]["max_retries"], 2)
 
     def test_latest_forecast_falls_back_when_today_not_out(self):
         kma = FakeKma({"202610231700": BODY})  # 05:02인데 오늘 05시분이 아직 안 올라옴
@@ -59,11 +69,13 @@ class TodayObsTest(unittest.TestCase):
         row = ("20261022,108,-9.0,-9,29,3.6,1006,25,6.1,1035,-99.0,13.2,1141,5.2,716,-99.0,-99.0,-0.5,-9.0,32.0,"
                "1145,-9.0,-9.0,-9.0,-9.00,-9.0,-9.0,1029.2,958,1025.9,11,-9.0,-9.0,11.0,-9.0,-9.00,-9.00,-9,-9.0,"
                "-9.0,-9.00,-9.0,-9,-9.0,-9,-9.0,-9,-9.0,-9,-9.0,-9,-99.0,-99.0,-99.0,-99.0,-99.0,")
-        with patch("domain.kma.request_kma", lambda path, params: f"#START7777\n# 머리글\n{row}\n#7777END\n"):
+        with patch("domain.kma.request_kma", lambda path, params, **o: f"#START7777\n# 머리글\n{row}\n#7777END\n"):
             obs = fetch_today_obs("108", date(2026, 10, 22))
         self.assertEqual((obs["ta_max"], obs["ta_min"]), (13.2, 5.2))
         self.assertIsNone(obs["ta_avg"])
         self.assertIsNone(obs["hm_avg"])
+        # 하루가 끝나기 전의 -9.0은 '아직 집계 안 됨'일 수 있어 '비 없음'으로 단정하지 않는다
+        self.assertIsNone(obs["rn_day"])
 
 
 class AnomalyTest(unittest.TestCase):

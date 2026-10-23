@@ -4,6 +4,7 @@
     svc.ask("108", "오늘 서울 어때?", history)
 """
 import os
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -21,6 +22,7 @@ from rag.graph import Deps, build_graph
 from rag.store import get_store
 
 REPORT_QUESTION = "오늘 날씨를 최근 10년 기준값과 과거 유사 사례에 비추어 설명해줘"
+CITATION = re.compile(r"\s*\[근거[^\]]*\]")
 EXPLORE_K = 15
 READY_CHECKS = [("station_meta", "지점 색인", "build_climate.py"), ("forecast_texts", "예보 개황 색인", "build_forecast.py"),
                 ("climate_docs", "용어집 색인", "build_glossary.py")]
@@ -49,8 +51,9 @@ def collection_counts() -> dict[str, int]:
 
 def check_ready() -> list[str]:
     """실행 전에 막히는 문제와 해결 방법. 키 값은 넣지 않는다. (F2012, NF2004)"""
+    # WIKI_CONTACT는 외부 출처 User-Agent의 연락처 (NF2006). 없으면 위키백과가 분당 10회로 제한한다
     problems = [f"{key}가 설정되지 않았습니다. 프로젝트 루트의 .env에 {key}를 넣어 주세요."
-                for key in ("GMS_KEY", "KMA_API_KEY") if not os.environ.get(key, "").strip()]
+                for key in ("GMS_KEY", "KMA_API_KEY", "WIKI_CONTACT") if not os.environ.get(key, "").strip()]
     if not DB_PATH.exists():
         problems.append("정형 날씨 DB가 없습니다. code 폴더에서 python build_climate.py를 실행해 주세요.")
     counts = collection_counts()
@@ -67,6 +70,8 @@ class Service:
             force_cases: bool = False) -> Answer:
         """RAG 채팅: retrieve → generate."""
         graph = build_graph(replace(self.deps, on_step=on_step))
+        # 이전 답의 [근거 N]은 그때의 번호라, 남겨 두면 이번 답이 옛 번호를 베껴 다른 문서를 가리킬 수 있다
+        history = [{**m, "content": CITATION.sub("", m["content"])} for m in history]
         out = graph.invoke({"stn": stn, "question": question, "history": history, "now": now(),
                             "force_cases": force_cases, "evidence": [], "steps": [], "answer": ""})
         return Answer(out["answer"], cited(out["answer"], out["evidence"]), out["steps"],
@@ -79,12 +84,15 @@ class Service:
     def today_report(self, stn: str, on_step=lambda s: None) -> tuple[list[dict], Answer]:
         """오늘 날씨 리포트(F2010): 기준값 비교표 + 유사 사례를 꼭 넣은 해설."""
         today = now()
-        obs = fetch_today_obs(stn, today.date()) or {}
+        try:
+            obs = fetch_today_obs(stn, today.date()) or {}
+        except RuntimeError:
+            obs = {}
         base = get_baseline(self.deps.db, stn, today.strftime("%m%d")) or {}
         rows = []
         for v in VARIABLES:
             value, mean = obs.get(v), base.get(v)
-            rows.append({"항목": LABELS[v][0], "오늘 관측": value, "최근 10년 기준값": mean,
+            rows.append({"항목": LABELS[v][0], "오늘 관측(지금까지)": value, "최근 10년 기준값": mean,
                          "차이": round(value - mean, 1) if value is not None and mean is not None else None,
                          "판정": classify(value, mean, base.get(f"{v}_sd"))})
         return rows, self.ask(stn, REPORT_QUESTION, [], on_step, force_cases=True)

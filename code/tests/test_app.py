@@ -54,14 +54,34 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(at.session_state.histories["108"]["rag"], [])
         self.assertEqual(len(at.exception), 0)
 
-    def test_rag_location_switches_station(self):
+    def test_rag_location_switches_station_after_confirm(self):
         at = self.start(FakeLLM([NO_PLAN, "강릉은 맑습니다 [근거 2]"]))
         at.chat_input(key="rag_in").set_value("강릉 날씨 어때?").run()
+        self.assertEqual(at.session_state.stn, "108")  # 다른 지점으로는 묻고 나서 바꾼다
+        self.assertNotIn("강릉은 맑습니다", self.chat_markdown(at))
+        at.button(key="cand_105").click().run()
         self.assertEqual(at.session_state.stn, "105")
         self.assertEqual(at.selectbox(key="stn").value, "105")
         self.assertIn("강릉은 맑습니다", self.chat_markdown(at))
         self.assertEqual(at.session_state.histories["105"]["rag"][-1]["cited"][0][1], "오늘 개황")
         self.assertEqual(at.session_state.histories.get("108", {"rag": []})["rag"], [])  # 서울 대화와 섞이지 않는다
+
+    def test_keep_current_station_answers_held_question(self):
+        # "양산 챙겨야 할까?"(양산=우산)처럼 지명으로 잘못 잡혀도 현재 지점에서 답할 수 있다
+        at = self.start(FakeLLM([NO_PLAN, "서울 기준 답 [근거 1]"]))
+        at.chat_input(key="rag_in").set_value("강릉 날씨 어때?").run()
+        at.button(key="keep_current").click().run()
+        self.assertEqual(at.session_state.stn, "108")
+        self.assertIn("서울 기준 답", self.chat_markdown(at))
+        self.assertEqual(at.session_state.candidates, [])
+
+    def test_new_question_clears_pending_choice(self):
+        at = self.start(FakeLLM([NO_PLAN, "새 질문 답 [근거 1]"]))
+        at.chat_input(key="rag_in").set_value("고창 날씨").run()
+        at.chat_input(key="rag_in").set_value("오늘 비 와?").run()  # 지명 없는 새 질문
+        self.assertEqual(at.session_state.candidates, [])
+        self.assertIsNone(at.session_state.held_question)
+        self.assertIn("새 질문 답", self.chat_markdown(at))
 
     def test_ambiguous_location_waits_for_choice(self):
         at = self.start(FakeLLM([NO_PLAN, "고창 답 [근거 1]"]))

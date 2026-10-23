@@ -16,6 +16,11 @@ class CheckReadyTest(unittest.TestCase):
         self.assertNotIn("SECRET-KMA-123", problems)
         self.assertNotIn("KMA_API_KEY", problems)  # 있는 키는 문제 목록에 없다
 
+    def test_check_ready_requires_wiki_contact(self):
+        # User-Agent 연락처 없이 외부 출처를 부르면 NF2006 위반이고 위키백과 한도가 분당 10회로 줄어든다
+        with patch.dict(os.environ, {"WIKI_CONTACT": ""}):
+            self.assertIn("WIKI_CONTACT", " ".join(service.check_ready()))
+
 
 class ServiceTest(unittest.TestCase):
     def setUp(self):
@@ -54,11 +59,28 @@ class ServiceTest(unittest.TestCase):
         rows, answer = self.svc(FakeLLM([NO_PLAN, '{"selected": [1]}', "리포트 [근거 3]"])).today_report("108")
         self.assertEqual([r["항목"] for r in rows], ["평균기온", "최고기온", "최저기온", "상대습도", "평균풍속", "강수량"])
         by = {r["항목"]: r for r in rows}
-        self.assertEqual((by["최고기온"]["오늘 관측"], by["최고기온"]["최근 10년 기준값"], by["최고기온"]["차이"]),
+        # 하루가 끝나기 전 값이라는 것이 표에 드러나야 한다
+        self.assertEqual((by["최고기온"]["오늘 관측(지금까지)"], by["최고기온"]["최근 10년 기준값"], by["최고기온"]["차이"]),
                          (21.0, 19.0, 2.0))
         self.assertEqual(by["최고기온"]["판정"], "높음")    # z = 2/2 = 1.0
         self.assertEqual(by["상대습도"]["판정"], "비슷")    # z = -8/10
         self.assertTrue(answer.has_cases)
+
+    def test_today_report_survives_kma_failure(self):
+        def fail(*args):
+            raise RuntimeError("kma_sfcdd.php 연결 실패: ReadTimeout")
+        with patch("service.fetch_today_obs", fail):
+            rows, _ = self.svc(FakeLLM([NO_PLAN, '{"selected": [1]}', "리포트"])).today_report("108")
+        self.assertEqual(rows[1]["판정"], "자료 없음")
+
+    def test_history_citations_stripped(self):
+        # 이전 답의 [근거 2]는 그때의 번호다. 그대로 넘기면 이번 답이 옛 번호를 베껴 엉뚱한 문서를 가리킬 수 있다
+        llm = FakeLLM([NO_PLAN, "답"])
+        history = [{"role": "user", "content": "오늘 어때?"}, {"role": "assistant", "content": "맑습니다 [근거 2, 3]."}]
+        self.svc(llm).ask("108", "내일은?", history)
+        for call in llm.calls:
+            sent_history = [m["content"] for m in call[1:-1]]
+            self.assertEqual(sent_history, ["오늘 어때?", "맑습니다."])
 
     def test_explore_returns_selected_stations(self):
         llm = FakeLLM(['{"selected": [1]}'])

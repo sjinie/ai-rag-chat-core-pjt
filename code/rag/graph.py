@@ -59,12 +59,19 @@ def build_graph(deps: Deps):
         # (1) 지점 정보: 지점 프로필 + 오늘 관측을 최근 10년 기준값과 비교한 문장
         meta = deps.station_meta.get(ids=[stn], include=["documents", "metadatas"])
         base = get_baseline(deps.db, stn, now.strftime("%m%d")) or {}
-        obs = fetch_today_obs(stn, now.date()) or {}
+        try:  # 기상청 API가 늦거나 실패해도 DB에 있는 근거로 답한다
+            obs = fetch_today_obs(stn, now.date()) or {}
+        except RuntimeError:
+            obs = {}
+            step("오늘 관측을 받지 못했습니다")
         station = [Evidence("지점 정보", f"station:{stn}", meta["metadatas"][0]["title"], meta["metadatas"][0]["url"],
                             f"{meta['documents'][0]}\n오늘({now:%Y-%m-%d}, 지금까지) 관측: {anomaly_sentence(obs, base)}")]
 
         # (2) 오늘 개황: 항목 자체 문서. 항상 넣고 live_forecasts에 색인한다 (F2003·F2004)
-        forecast = fetch_latest_forecast(office, now)
+        try:
+            forecast = fetch_latest_forecast(office, now)
+        except RuntimeError:
+            forecast = None
         today = []
         if forecast:
             doc_id, text, live_meta = live_forecast_doc(forecast, OFFICES[office])

@@ -15,17 +15,20 @@ ASOS_SOURCE_URL = "https://data.kma.go.kr/data/grnd/selectAsosRltmList.do?pgmNo=
 # shortcut: 과거 개황마다 열어 볼 공개 주소를 아직 못 찾아 API허브 첫 화면을 쓴다. 찾으면 개황별 주소로 바꾼다.
 FORECAST_SOURCE_URL = "https://apihub.kma.go.kr/"
 
+# 질문을 처리하는 중의 호출은 빌드용(180초 × 4회)보다 짧게 끝낸다. 실패하면 그 근거만 빼고 답한다.
+LIVE = {"timeout": 10, "max_retries": 2}
+
 # kma_sfcdd3 응답의 열 위치(0부터). 전체 목록은 help=1로 확인할 수 있다.
 COLUMNS = {"ta_avg": 10, "ta_max": 11, "ta_min": 13, "hm_avg": 18, "ws_avg": 2, "rn_day": 38}
 
 
-def request_kma(path: str, params: dict, max_retries: int = 4) -> str:
+def request_kma(path: str, params: dict, max_retries: int = 4, timeout: float = 180) -> str:
     """API허브를 호출해 본문을 돌려준다. 429·5xx·연결 오류는 기다렸다가 다시 시도한다. (NF2006)"""
     wait = 2.0
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.get(
-                f"{API_URL}/{path}", params={**params, "authKey": require_env("KMA_API_KEY")}, timeout=180
+                f"{API_URL}/{path}", params={**params, "authKey": require_env("KMA_API_KEY")}, timeout=timeout
             )
         except requests.RequestException as e:
             # requests 예외 메시지에는 키가 든 URL 전체가 들어 있으므로 종류만 남긴다 (NF2004)
@@ -109,31 +112,40 @@ def parse_forecasts(text: str) -> list[dict]:
     return docs
 
 
-def today_summary(body: str) -> str:
-    """개황에서 '종합'과 '오늘' 문단만 남긴다. 내일·모레 문장이 섞이면 다른 날과 비슷하다고 잘못 잡힌다."""
+def today_summary(body: str, day: str = "오늘") -> str:
+    """개황에서 '종합'과 '오늘' 문단만 남긴다. 내일·모레 문장이 섞이면 다른 날과 비슷하다고 잘못 잡힌다.
+
+    day="내일"이면 전날 개황에서 오늘에 해당하는 '내일' 문단만 '(오늘)'로 바꿔 남긴다(종합은 전날 기준이라 뺀다).
+    """
     kept, keep = [], False
     for line in body.splitlines():
         s = line.strip()
         if s.startswith(("□", "○", "*")):
-            keep = s.startswith("□ (종합)") or s.startswith("○ (오늘")
+            keep = (day == "오늘" and s.startswith("□ (종합)")) or s.startswith(f"○ ({day}")
         if keep and s:
             kept.append(s)
     text = " ".join(kept)
-    text = re.sub(r"\(오늘[^)]*\)", "(오늘)", text)
+    text = re.sub(rf"\({day}[^)]*\)", "(오늘)", text)
     return re.sub(r"\d{1,2}일", "", text)  # 날짜 숫자는 유사도에 잡음만 된다
 
 
 def fetch_latest_forecast(office: str, now: datetime) -> dict | None:
-    """관할 지방청의 가장 최근 개황. 05시 이전이거나 오늘 05시분이 아직 없으면 전날 17시분을 쓴다."""
+    """관할 지방청의 가장 최근 개황. 05시 이전이거나 오늘 05시분이 아직 없으면 전날 17시분을 쓴다.
+
+    전날 개황이면 그 개황의 '내일' 문단이 오늘이므로 그 문단을 오늘 문단으로 쓴다.
+    """
     def latest(tmfc1: str, tmfc2: str) -> dict | None:
         docs = parse_forecasts(request_kma("fct_afs_ds.php", {"stn": office, "tmfc1": tmfc1, "tmfc2": tmfc2,
-                                                              "disp": 0, "help": 0}))
+                                                              "disp": 0, "help": 0}, **LIVE))
         return max(docs, key=lambda d: d["tmfc"]) if docs else None
 
     yesterday_17 = (now - timedelta(days=1)).strftime("%Y%m%d") + "1700"
     found = None if now.hour < 5 else latest(now.strftime("%Y%m%d") + "0000", now.strftime("%Y%m%d%H%M"))
     found = found or latest(yesterday_17, yesterday_17)
-    return {**found, "summary": today_summary(found["body"])} if found else None
+    if not found:
+        return None
+    day = "오늘" if found["tmfc"][:8] == now.strftime("%Y%m%d") else "내일"
+    return {**found, "summary": today_summary(found["body"], day)}
 
 
 def live_forecast_doc(f: dict, office_name: str) -> tuple[str, str, dict]:
@@ -147,10 +159,19 @@ def live_forecast_doc(f: dict, office_name: str) -> tuple[str, str, dict]:
 
 
 def fetch_today_obs(stn: str, today: date) -> dict | None:
-    """오늘 일자료(하루가 끝나기 전이라 결측이 많다). 이 엔드포인트는 쉼표로 구분된다."""
-    text = request_kma("kma_sfcdd.php", {"tm": today.strftime("%Y%m%d"), "stn": stn, "help": 0})
-    rows = parse_daily("\n".join(line.replace(",", " ") for line in text.splitlines()))
-    return rows[0] if rows else None
+    """오늘 일자료(하루가 끝나기 전이라 결측이 많다). 이 엔드포인트는 쉼표로 구분된다.
+
+    지난날의 일강수량 -9.0은 '비 없음'이지만, 오늘은 '아직 집계 안 됨'일 수 있어 자료 없음(None)으로 둔다.
+    """
+    text = request_kma("kma_sfcdd.php", {"tm": today.strftime("%Y%m%d"), "stn": stn, "help": 0}, **LIVE)
+    lines = [line.replace(",", " ") for line in text.splitlines()]
+    rows = parse_daily("\n".join(lines))
+    if not rows:
+        return None
+    raw = next(line for line in lines if line.strip() and not line.startswith("#")).split()
+    if float(raw[COLUMNS["rn_day"]]) == -9.0:
+        rows[0]["rn_day"] = None
+    return rows[0]
 
 
 def parse_daily(text: str) -> list[dict]:

@@ -61,6 +61,16 @@ class GraphTest(unittest.TestCase):
         out = self.run_graph(FakeLLM([NO_PLAN, '{"selected": [1]}', "답"]), force_cases=True)
         self.assertIn("유사 사례", [e.kind for e in out["evidence"]])
 
+    def test_kma_failure_still_answers(self):
+        def fail(*args):
+            raise RuntimeError("fct_afs_ds.php 연결 실패: ReadTimeout")
+        with patch("rag.graph.fetch_latest_forecast", fail), patch("rag.graph.fetch_today_obs", fail):
+            out = self.run_graph(FakeLLM([NO_PLAN, "지점 정보로 답함 [근거 1]"]))
+        self.assertEqual(out["answer"], "지점 정보로 답함 [근거 1]")
+        self.assertEqual([e.kind for e in out["evidence"]], ["지점 정보"])
+        self.assertIn("오늘 개황을 받지 못했습니다", out["steps"])
+        self.assertIn("오늘 관측을 받지 못했습니다", out["steps"])
+
     def test_plan_failure_still_answers(self):
         out = self.run_graph(FakeLLM(["모름", "여전히 모름", "기본 근거로 답함"]))
         self.assertEqual(out["answer"], "기본 근거로 답함")

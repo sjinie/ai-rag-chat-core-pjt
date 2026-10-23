@@ -10,6 +10,11 @@ STATIONS = {
     "172": {"name": "고창", "address": "전북특별자치도 고창군 대산면 매산리"},
     "217": {"name": "정선군", "address": "강원특별자치도 정선군 정선읍 애산리"},
     "251": {"name": "고창군", "address": "전북특별자치도 고창군 고창읍 덕산리"},
+    "295": {"name": "남해", "address": "경상남도 남해군 이동면 다정리"},
+    "106": {"name": "동해", "address": "강원특별자치도 동해시 용정동"},
+    "201": {"name": "강화", "address": "인천광역시 강화군 불은면 삼성리"},
+    "216": {"name": "태백", "address": "강원특별자치도 태백시 황지동"},
+    "236": {"name": "부여", "address": "충청남도 부여군 부여읍 가탑리"},
 }
 
 
@@ -46,6 +51,14 @@ class MatchTest(unittest.TestCase):
         self.assertEqual(match_stations("북강릉은 어때?", STATIONS), ["104"])  # 긴 이름 안의 '강릉'은 따로 세지 않음
         self.assertEqual(match_stations("정선 비 와?", STATIONS), ["217"])
         self.assertEqual(match_stations("종로구 오늘 추워?", STATIONS), ["108"])  # 이름이 없으면 시·군·구
+
+    def test_match_ignores_names_inside_other_words(self):
+        # 최종 리뷰에서 실제 97개 지점으로 지점이 바뀌던 문장들
+        for text in ("남해안에 비 많이 와?", "동해안 너울 조심해야 해?", "한파가 강화된다는데 내일 추워?",
+                     "태백산맥 때문에 푄 현상이 생겨?", "부여된 특보 있어?"):
+            self.assertEqual(match_stations(text, STATIONS), [], text)
+        self.assertEqual(match_stations("남해는 오늘 어때?", STATIONS), ["295"])  # 조사가 붙은 지명은 그대로
+        self.assertEqual(match_stations("강화 날씨", STATIONS), ["201"])
 
     def test_match_ambiguous_and_none(self):
         self.assertEqual(match_stations("고창", STATIONS), ["172", "251"])

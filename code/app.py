@@ -63,15 +63,18 @@ def pick_candidate(stn: str) -> None:
     state.pending_rag, state.held_question = state.held_question, None
 
 
+def keep_current() -> None:
+    state.pending_rag, state.held_question, state.candidates = state.held_question, None, []
+
+
 def on_rag_submit() -> None:
-    """채팅에 지명이 있으면 지점을 먼저 바꾼다. 여러 곳에 맞으면 고를 때까지 답하지 않는다."""
+    """채팅에 다른 지점의 지명이 있으면 바꿀지 먼저 묻는다. '양산(우산)'처럼 잘못 잡힐 수 있어 조용히 바꾸지 않는다."""
     question = state.rag_in
+    state.candidates, state.held_question = [], None  # 새 질문이 오면 묻던 선택은 버린다
     found = svc.resolve_location(question)
-    if len(found) > 1:
+    if found and found != [state.stn]:
         state.candidates, state.held_question = found, question
         return
-    if found:
-        pick(found[0])
     state.pending_rag = question
 
 
@@ -173,9 +176,10 @@ with right:
     st.subheader("RAG 채팅")
     st.caption("오늘 개황, 과거 유사 사례, 허용된 외부 문서를 근거로 답하고 인용한 근거를 보여 줍니다.")
     if state.candidates:
-        st.info("여러 지점이 해당됩니다. 질문할 지점을 골라 주세요.")
+        st.info("질문에 다른 지점의 지명이 있습니다. 어느 지점으로 답할까요?")
         for c in state.candidates:
             st.button(label(c), key=f"cand_{c}", on_click=pick_candidate, args=(c,))
+        st.button(f"지금 지점 그대로: {label(stn)}", key="keep_current", on_click=keep_current)
     box = st.container(height=560)
     for m in chats["rag"]:
         with box.chat_message(m["role"]):

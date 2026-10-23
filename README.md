@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ```
 GMS_KEY=SSAFY GMS 키
 KMA_API_KEY=기상청 API허브 키 (지상관측 일자료·지점 정보·단기예보 개황·평년값 활용신청 필요)
-WIKI_CONTACT=영문 이메일 (위키백과·외부 출처 User-Agent 연락처)
+WIKI_CONTACT=영문 이메일 (외부 출처 User-Agent 연락처. 없으면 앱이 시작되지 않음 — NF2006)
 ```
 
 ## 데이터 준비와 색인 (처음 한 번, `code/`에서)

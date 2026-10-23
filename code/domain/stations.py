@@ -168,13 +168,32 @@ def match_stations(text: str, stations: dict) -> list[str]:
             names.setdefault(name[:-1], set()).add(stn)
     found, rest = set(), text
     for name in sorted(names, key=len, reverse=True):
-        if name in rest:
-            rest = rest.replace(name, " " * len(name))
+        for start in _mentions(name, rest):
+            rest = rest[:start] + " " * len(name) + rest[start + len(name):]
             found |= names[name]
     if found:
         return sorted(found, key=int)
     return sorted((stn for stn, info in stations.items()
-                   if any(w[-1] in "시군구" and w in text for w in info["address"].split()[1:])), key=int)
+                   if any(w[-1] in "시군구" and _mentions(w, text) for w in info["address"].split()[1:])), key=int)
+
+
+# 지명 바로 뒤에 와도 되는 말. 그 밖의 한글이 붙으면 다른 낱말의 일부로 본다("남해안", "강화된다", "태백산맥")
+PARTICLES = ("은", "는", "이", "가", "을", "를", "의", "에", "도", "로", "으로", "와", "과", "까지", "부터", "쪽",
+             "날씨", "기온", "지역", "지방", "시", "군", "구")
+
+
+def _mentions(word: str, text: str) -> list[int]:
+    """text에서 word가 낱말로 쓰인 시작 위치들. 앞에 한글이 붙거나 뒤에 조사가 아닌 한글이 붙으면 뺀다."""
+    def hangul(ch: str) -> bool:
+        return "가" <= ch <= "힣"
+
+    starts, i = [], text.find(word)
+    while i >= 0:
+        after = text[i + len(word):]
+        if (i == 0 or not hangul(text[i - 1])) and (not after or not hangul(after[0]) or after.startswith(PARTICLES)):
+            starts.append(i)
+        i = text.find(word, i + 1)
+    return starts
 
 
 def station_text(stn: str, info: dict, months: dict, period: str, traits: list[str]) -> str:
