@@ -124,6 +124,37 @@ def climate_traits(rows: list[dict], info: dict) -> list[str]:
     return traits
 
 
+def classify(value: float | None, mean: float | None, sd: float | None) -> str:
+    """기준값과 비교한 판정. z = (값−평균)/표준편차: ≤−2 매우 낮음, ≤−1 낮음, <1 비슷, <2 높음, 그 이상 매우 높음."""
+    if value is None or mean is None:
+        return "자료 없음"
+    diff = value - mean
+    if not sd:
+        return "비슷" if diff == 0 else "높음" if diff > 0 else "낮음"
+    z = diff / sd
+    return "매우 낮음" if z <= -2 else "낮음" if z <= -1 else "비슷" if z < 1 else "높음" if z < 2 else "매우 높음"
+
+
+def anomaly_sentence(obs: dict, base: dict) -> str:
+    """6개 항목의 관측을 기준값과 비교한 문장. 숫자 계산은 여기서 끝내고 LLM에는 결과만 넘긴다."""
+    parts = []
+    for v in VARIABLES:
+        label, unit = LABELS[v]
+        value, mean = obs.get(v), base.get(v)
+        if value is None:
+            parts.append(f"{label} 자료 없음")
+        elif v == "rn_day" and value == 0:
+            parts.append(f"비 없음(최근 10년 기준값 {mean}{unit})")
+        elif mean is None:
+            parts.append(f"{label} {value}{unit}")
+        else:
+            diff = value - mean
+            direction = "높음" if diff > 0 else "낮음" if diff < 0 else "같음"
+            parts.append(f"{label} {value}{unit}(최근 10년 기준값보다 {abs(diff):.1f}{unit} {direction}, "
+                         f"{classify(value, mean, base.get(f'{v}_sd'))})")
+    return ", ".join(parts)
+
+
 def match_stations(text: str, stations: dict) -> list[str]:
     """입력 문장에 나온 지점. 지점명(끝의 시·군을 뗀 형태 포함)이 우선이고, 없으면 주소의 시·군·구 단어.
 

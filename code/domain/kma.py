@@ -1,7 +1,7 @@
 """기상청 API허브 호출과 응답 파싱."""
 import re
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -121,6 +121,36 @@ def today_summary(body: str) -> str:
     text = " ".join(kept)
     text = re.sub(r"\(오늘[^)]*\)", "(오늘)", text)
     return re.sub(r"\d{1,2}일", "", text)  # 날짜 숫자는 유사도에 잡음만 된다
+
+
+def fetch_latest_forecast(office: str, now: datetime) -> dict | None:
+    """관할 지방청의 가장 최근 개황. 05시 이전이거나 오늘 05시분이 아직 없으면 전날 17시분을 쓴다."""
+    def latest(tmfc1: str, tmfc2: str) -> dict | None:
+        docs = parse_forecasts(request_kma("fct_afs_ds.php", {"stn": office, "tmfc1": tmfc1, "tmfc2": tmfc2,
+                                                              "disp": 0, "help": 0}))
+        return max(docs, key=lambda d: d["tmfc"]) if docs else None
+
+    yesterday_17 = (now - timedelta(days=1)).strftime("%Y%m%d") + "1700"
+    found = None if now.hour < 5 else latest(now.strftime("%Y%m%d") + "0000", now.strftime("%Y%m%d%H%M"))
+    found = found or latest(yesterday_17, yesterday_17)
+    return {**found, "summary": today_summary(found["body"])} if found else None
+
+
+def live_forecast_doc(f: dict, office_name: str) -> tuple[str, str, dict]:
+    """오늘 개황을 live_forecasts 컬렉션에 넣을 (ID, 오늘 문단, 메타데이터). 항목 자체 문서는 항상 색인한다 (F2004)."""
+    t = f["tmfc"]
+    doc_id = f"live:{f['office']}:{t}"
+    return doc_id, f["summary"], {
+        "source_type": "kma_forecast_live", "doc_id": doc_id, "office": f["office"], "tmfc": t,
+        "title": f"{office_name} 단기예보 개황 · {t[:4]}-{t[4:6]}-{t[6:8]} {t[8:10]}시 발표",
+        "url": FORECAST_SOURCE_URL, "body": f["body"], "collected_at": date.today().isoformat()}
+
+
+def fetch_today_obs(stn: str, today: date) -> dict | None:
+    """오늘 일자료(하루가 끝나기 전이라 결측이 많다). 이 엔드포인트는 쉼표로 구분된다."""
+    text = request_kma("kma_sfcdd.php", {"tm": today.strftime("%Y%m%d"), "stn": stn, "help": 0})
+    rows = parse_daily("\n".join(line.replace(",", " ") for line in text.splitlines()))
+    return rows[0] if rows else None
 
 
 def parse_daily(text: str) -> list[dict]:
