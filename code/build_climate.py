@@ -8,11 +8,11 @@
 3. SQLite data/weather.db : obs_daily(지점 × 날짜 실제 관측), baseline(지점 × MMDD 기준값)
    Chroma station_meta    : 지점 1건 = 지점 정보(주소·고도·관할 지방청) + 월별 평균 텍스트 (ID = 지점번호)
 """
-from collections import Counter
+from collections import Counter, defaultdict
 
 from config import CONFIG
 from domain.kma import ASOS_SOURCE_URL, fetch_daily_year, fetch_stations, parse_daily
-from domain.stations import OFFICES, compute_baselines, monthly_summary, office_for, station_text
+from domain.stations import OFFICES, climate_traits, compute_baselines, monthly_summary, office_for, station_text
 from domain.weather_db import connect, get_baseline, get_obs, save_baselines, save_obs
 from rag.store import get_store, upsert_changed
 
@@ -51,11 +51,14 @@ def main() -> None:
     assert obs_count == len(rows) and base_count == len(baselines) * 366, (obs_count, base_count)
 
     print("④ VectorDB 저장 (station_meta)")
+    rows_by_stn = defaultdict(list)
+    for r in rows:
+        rows_by_stn[r["stn"]].append(r)
     ids, texts, metas = [], [], []
     for stn, daily in baselines.items():
         info = stations[stn]
         ids.append(stn)
-        texts.append(station_text(stn, info, monthly_summary(daily), period))
+        texts.append(station_text(stn, info, monthly_summary(daily), period, climate_traits(rows_by_stn[stn], info)))
         metas.append({"stn": stn, "name": info["name"], "sido": info["sido"], "address": info["address"],
                       "lat": info["lat"], "lon": info["lon"], "height": info["height"], "mountain": info["mountain"],
                       "fct_id": info["fct_id"], "office": office_for(info["fct_id"]), "period": period,

@@ -97,10 +97,60 @@ def format_values(entry: dict, rain_label: str = "강수량") -> str:
     return ", ".join(parts)
 
 
-def station_text(stn: str, info: dict, months: dict, period: str) -> str:
-    """항목 1건 = 지점 하나의 색인 텍스트. 위치·고도를 넣어야 '산간 지역' 같은 조건 검색에 걸린다. (F2001, F2011)"""
+def climate_traits(rows: list[dict], info: dict) -> list[str]:
+    """지점 하나의 관측 행 → 기후 성격 문장. 숫자만으로는 '산이 많은 곳' 같은 조건 검색에 걸리지 않는다.
+
+    연평균 일수 = 해당 일수 / 자료가 있는 연도 수. 기준: 폭염 최고 33℃↑, 열대야 최저 25℃↑, 한파 최저 -12℃↓.
+    """
+    years = len({r["date"][:4] for r in rows if r["ta_max"] is not None}) or 1
+    hot = sum(r["ta_max"] is not None and r["ta_max"] >= 33 for r in rows) / years
+    tropical = sum(r["ta_min"] is not None and r["ta_min"] >= 25 for r in rows) / years
+    cold = sum(r["ta_min"] is not None and r["ta_min"] <= -12 for r in rows) / years
+    rain = sum(r["rn_day"] or 0 for r in rows) / years
+
+    # 꼬리표만 두면 "겨울에 아주 춥고 산이 많은 곳" 같은 질문과 임베딩이 멀어서 자연어 문장을 함께 붙인다
+    height = info["height"]
+    traits = ["평지: 해발이 낮은 평지에 있다" if height < 100 else "구릉: 낮은 산과 언덕이 있는 구릉 지대에 있다"
+              if height < 400 else "고지대: 산이 많은 산간 고지대에 있다"]
+    if info["mountain"]:
+        traits.append("산지: 산간 지역의 산지 관측소다")
+    if info["name"].endswith("도"):
+        traits.append("섬: 바다 위 섬 지역에 있다")
+    for label, days, sentence in (("폭염", hot, "여름이 무덥고 폭염이 잦다"), ("열대야", tropical, "여름밤 열대야가 잦다"),
+                                  ("한파", cold, "겨울이 매우 춥고 한파가 잦다")):
+        traits.append(f"{label} 잦음(연 {days:.1f}일): {sentence}" if days >= 10 else f"{label} 연 {days:.1f}일")
+    traits.append(f"다우지(연 {rain:.0f}mm): 비가 많이 오는 지역이다" if rain >= 1500
+                  else f"소우지(연 {rain:.0f}mm): 비가 적게 오는 지역이다" if rain <= 1000 else f"연강수량 {rain:.0f}mm")
+    return traits
+
+
+def match_stations(text: str, stations: dict) -> list[str]:
+    """입력 문장에 나온 지점. 지점명(끝의 시·군을 뗀 형태 포함)이 우선이고, 없으면 주소의 시·군·구 단어.
+
+    긴 이름부터 찾고 찾은 자리를 지워서, '북강릉' 안의 '강릉'이 따로 잡히지 않게 한다.
+    """
+    names: dict[str, set[str]] = {}  # 이름 → 지점들 ('고창'은 고창·고창군 두 지점)
+    for stn, info in stations.items():
+        name = info["name"]
+        names.setdefault(name, set()).add(stn)
+        if len(name) > 2 and name[-1] in "시군":
+            names.setdefault(name[:-1], set()).add(stn)
+    found, rest = set(), text
+    for name in sorted(names, key=len, reverse=True):
+        if name in rest:
+            rest = rest.replace(name, " " * len(name))
+            found |= names[name]
+    if found:
+        return sorted(found, key=int)
+    return sorted((stn for stn, info in stations.items()
+                   if any(w[-1] in "시군구" and w in text for w in info["address"].split()[1:])), key=int)
+
+
+def station_text(stn: str, info: dict, months: dict, period: str, traits: list[str]) -> str:
+    """항목 1건 = 지점 하나의 색인 텍스트. 위치·고도·기후 성격을 넣어야 조건 검색에 걸린다. (F2001, F2011)"""
     terrain = "산지 관측소" if info["mountain"] else "관측소"
     lines = [f"{info['name']}({stn}) {terrain} · {info['address']} · 해발 {info['height']:.0f}m",
+             f"기후 특징: {'. '.join(traits)}.",
              f"최근 10년({period}) 월별 평균:"]
     lines += [f"{m}월: {format_values(months[m], '월강수량')}" for m in range(1, 13)]
     return "\n".join(lines)
