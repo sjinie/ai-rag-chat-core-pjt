@@ -232,3 +232,4 @@ data/chroma/
 data/weather.db
 # venv용 [Ss]cripts 규칙이 코드 폴더까지 막지 않게
 !code/scripts/
+data/cache.db

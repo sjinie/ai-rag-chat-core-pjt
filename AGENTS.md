@@ -50,7 +50,9 @@ SSAFY AI 코어 프로젝트 2회차 — **RAG 기반 도메인 지식 서비스
 |---|---|---|---|
 | Chroma `station_meta` | 지점 프로필(주소·고도·산지·관할 지방청) + 월별 10년 평균 | `{지점번호}` | 선택 지점은 ID로 직접, 조건 탐색(F2011)은 유사도 |
 | Chroma `forecast_texts` | 지방청별 단기예보 개황 '종합·오늘' 문단, 2021~2025, 05시 발표 | `fcst:{지방청}:{YYYYMMDD}` | 유사도 + 필터(같은 관할 지방청만). 메타데이터 `body`에 원문 전체, `url`·`collected_at` |
-| Chroma `climate_docs` | 외부 문서 청크 | `{출처}:{문서ID}:{순번}` | 유사도/MMR |
+| Chroma `live_forecasts` | 오늘 개황(항목 자체 문서, 질문 시 색인) | `live:{지방청}:{발표시각}` | ID 직접 |
+| Chroma `climate_docs` | 외부 문서 청크 | 질문 시 수집 `{지점}:{문서ID}:{순번}`, 고정 문서 `common:{ipcc|kma_terms}:{용어}:{순번}` | 유사도/MMR, 필터 `stn ∈ {지점, common}` |
+| SQLite `data/cache.db` | 검색어 캐시, 유사 사례 선별 캐시 | `(stn, source, query)`, `(stn, tmfc)` | `rag/cache.py` |
 | SQLite `data/weather.db` `obs_daily` | 지점 × 날짜 실제 관측 6종 (2016~2025) | `(stn, date)` | `get_obs` |
 | SQLite `data/weather.db` `baseline` | 지점 × MMDD 10년 평균·표준편차·표본 수 | `(stn, mmdd)` | `get_baseline` |
 
@@ -90,33 +92,44 @@ Python 3.10+ · Streamlit 1.62.0 · LangChain 1.3.14 · LangGraph 1.2.10 · Lang
 
 ```
 code/
-  config.toml           # ✅ 모델명, 기간·창 크기, 개황 기간·발표시각, Chroma 경로 (이후 chunk_size·top_k·search_type 추가)
-  config.py             # ✅ config.toml + 루트 .env 로드
-  build_climate.py      # ✅ 10년 일자료 → weather.db(obs_daily·baseline) + station_meta 색인
-  build_forecast.py     # ✅ 5년 단기예보 개황 → forecast_texts 색인
-  app.py                # Streamlit UI (step7_skeleton.py에서 출발)
-  domain/               # 도메인 종속 코드는 여기만
-    kma.py              # ✅ API허브 호출·파싱 (원문은 data/raw에 캐시), 개황 '오늘' 문단 추출
-    stations.py         # ✅ 10년 ±7일 평균·표준편차, 관할 지방청 매핑, 지점 텍스트
-    weather_db.py       # ✅ SQLite 정형 데이터 (obs_daily, baseline)
-    prompts.py          # 프롬프트 3개 (검색어 추출 / 후보 선별 / 답변 생성)
+  config.toml           # 모델명, 기간·창 크기, 개황 기간, [rag] 청크·top_k·검색 방식·유사 사례 수, [web] 허용 호스트
+  config.py             # config.toml + 루트 .env 로드
+  build_climate.py      # 10년 일자료 → weather.db(obs_daily·baseline) + station_meta 색인
+  build_forecast.py     # 5년 단기예보 개황 → forecast_texts 색인
+  build_glossary.py     # IPCC 용어집 PDF·기상청 특보 기준·예보용어 → climate_docs(common) 색인
+  service.py            # 화면이 부르는 유일한 진입점: Service.ask / plain_chat / today_report / explore / resolve_location, check_ready
+  app.py                # Streamlit: 사이드바(지점·조건 탐색·리포트) + 단순 채팅 | RAG 채팅
+  domain/               # 도메인 종속 코드
+    kma.py              # API허브 호출·파싱·캐시, 오늘 최신 개황, 오늘 관측
+    stations.py         # 기준값·표준편차, 기후 특징, 편차 판정, 위치→지점 매칭, 관할 지방청
+    weather_db.py       # SQLite 정형 데이터 (obs_daily, baseline)
+    prompts.py          # 프롬프트 3개 + 단순 채팅 역할, JSON 파싱(ask_json)
+    cases.py            # 유사 사례 후보·선별·캐시 (ADR 0001)
   rag/
-    store.py            # ✅ Chroma 컬렉션, 없거나 바뀐 ID만 임베딩
-    web.py              # 허용 목록 도메인만 호출하는 HTTP (User-Agent·재시도·간격)
-    collect.py          # 프롬프트1 → 허용 출처 검색 → 프롬프트2 → 수집 → 청킹·색인
+    store.py            # Chroma 컬렉션, 바뀐 것만 임베딩(메타데이터만 바뀌면 임베딩 없이 갱신)
+    web.py              # 허용 호스트만 부르는 HTTP (User-Agent·간격·재시도·리다이렉트 검사)
+    html_text.py        # HTML → 본문 텍스트
+    sources/            # 질문 시 수집 출처: wiki.py, nasa.py, noaa.py (search / fetch)
+    fixed_docs.py       # IPCC PDF·기상청 표를 용어 단위로 자르기
+    collect.py          # 검색어 → 출처 검색 → 프롬프트2 → 수집 → 청킹·색인, 근거 검색(similarity/MMR)
+    cache.py            # data/cache.db: 검색어 캐시, 유사 사례 선별 캐시
+    evidence.py         # Evidence, 병합·중복 제거, 근거 블록, 인용 추출
     graph.py            # LangGraph retrieve / generate
+  scripts/              # 검증: backtest_cases, compare_mmr, compare_rag (docs/검증결과.md에 기록)
+  tests/                # unittest (가짜 LLM·임베딩, 네트워크 없음)
 data/
-  raw/                  # API 원문 캐시 (git 제외)
+  raw/                  # API·웹 원문 캐시 (git 제외)
   chroma/               # 벡터DB (git 제외)
-  weather.db            # 정형 날씨 데이터 (git 제외)
+  weather.db, cache.db  # 정형 날씨 데이터, 처리 캐시 (git 제외)
   sources.md            # 출처·이용 조건
 ```
 
 ## 작업 방식
 
 - 가상환경: 루트 `.venv` (`pip install -r requirements.txt`)
-- 실행(`code/`에서): 색인 `python build_climate.py`, `python build_forecast.py` / 앱 `streamlit run app.py`
-- 자체 점검(`code/`에서): `python domain/stations.py`, `python -m domain.kma`
+- 실행(`code/`에서): 색인 `python build_climate.py` → `python build_forecast.py` → `python build_glossary.py` / 앱 `streamlit run app.py`
+- 테스트(`code/`에서): `python -m unittest discover -s tests -v`. 자체 점검: `python domain/stations.py`, `python -m domain.kma`
+- 검증 스크립트(`code/`에서): `python -m scripts.backtest_cases` / `compare_mmr` / `compare_rag`
 - 새 로직(파싱, 편차 계산, 근거 번호 추출 등)에는 작은 assert 기반 검증을 남긴다.
 - 검증은 실행 결과로 증명한다 — 명세 4장 체크리스트(색인 수 일치, 재색인 시 청크 수 불변, 근거 번호와 표시 목록 일치, 키 없음/색인 없음 안내 등).
 - 커밋 메시지·문서는 한국어로 쓴다.
