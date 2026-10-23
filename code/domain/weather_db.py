@@ -8,8 +8,9 @@ DB_PATH = DATA_DIR / "weather.db"
 SD = [f"{v}_sd" for v in VARIABLES]
 
 
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+def connect(path=DB_PATH) -> sqlite3.Connection:
+    """테스트는 ':memory:'를 넘긴다. Streamlit은 화면을 다시 그리는 스레드가 달라 같은 연결을 여러 스레드에서 쓴다."""
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(f"""
         CREATE TABLE IF NOT EXISTS obs_daily (
