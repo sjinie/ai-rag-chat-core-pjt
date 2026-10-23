@@ -11,6 +11,12 @@ class PlanTest(unittest.TestCase):
         text = '```json\n{"need_cases": true, "queries": {"wiki": ["열대야"], "nasa": [], "unknown": ["x"]}}\n```'
         self.assertEqual(parse_plan(text), Plan(True, {**EMPTY, "wiki": ["열대야"]}))
 
+    def test_parse_plan_reads_place_description(self):
+        plan = parse_plan('{"need_cases": false, "queries": {}, "place": "겨울에 아주 춥고 산이 많은 곳"}')
+        self.assertEqual(plan.place, "겨울에 아주 춥고 산이 많은 곳")
+        self.assertEqual(parse_plan('{"need_cases": false, "queries": {}}').place, "")  # 없으면 빈 문자열
+        self.assertIsNone(parse_plan('{"need_cases": false, "queries": {}, "place": ["산"]}'))
+
     def test_parse_plan_caps_two_queries(self):
         plan = parse_plan('{"need_cases": false, "queries": {"wiki": ["a", "b", "c"]}}')
         self.assertEqual(plan.queries["wiki"], ["a", "b"])

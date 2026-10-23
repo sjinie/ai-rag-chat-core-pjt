@@ -72,6 +72,15 @@ def collect(llm, store, cache_conn, stn: str, question: str, plan, on_step) -> l
     return titles
 
 
+def select_stations(llm, station_meta, condition: str, k: int = 15) -> list[str]:
+    """자연어 조건에 맞는 지점(F2011): 지점 프로필 유사도 상위 k곳 → 프롬프트2가 조건에 맞는 곳만 고른다."""
+    docs = station_meta.similarity_search(condition, k=k)
+    items = [(i, d.metadata.get("name", d.id), " ".join(d.page_content.splitlines()[:2])) for i, d in enumerate(docs, 1)]
+    picked = ask_json(llm, select_messages("stations", items, condition),
+                      lambda text: parse_selected(text, set(range(1, len(docs) + 1))))
+    return [docs[i - 1].id for i in picked or []]
+
+
 def search_docs(store, stn: str, plan) -> list[Document]:
     """검색어가 있는 출처마다 그 출처 언어의 검색어로, 이 지점이 모은 문서와 공통 문서에서만 찾는다.
 

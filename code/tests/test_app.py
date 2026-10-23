@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 
 import service
 from tests.fakes import FakeLLM
-from tests.fixtures import NO_PLAN, NOW, OBS, TODAY, make_deps
+from tests.fixtures import NO_PLAN, NOW, OBS, PLACE_PLAN, TODAY, make_deps
 
 APP = str(Path(__file__).resolve().parents[1] / "app.py")
 
@@ -82,6 +82,19 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(at.session_state.candidates, [])
         self.assertIsNone(at.session_state.held_question)
         self.assertIn("새 질문 답", self.chat_markdown(at))
+
+    def test_place_description_shows_choice(self):
+        # 지명 없이 "산이 많은 곳"처럼 말해도 사이드바 조건 탐색처럼 지점 후보를 띄운다
+        llm = FakeLLM([PLACE_PLAN, '{"selected": [1, 2]}', PLACE_PLAN, "그 지점의 여름 답 [근거 1]"])
+        at = self.start(llm)
+        at.chat_input(key="rag_in").set_value("겨울에 아주 춥고 산이 많은 곳은 여름에 어때?").run()
+        candidates = at.session_state.candidates
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(at.session_state.histories["108"]["rag"], [])  # 고르기 전에는 대화에 남기지 않는다
+        target = next(c for c in candidates if c != "108")
+        at.button(key=f"cand_{target}").click().run()
+        self.assertEqual(at.session_state.stn, target)
+        self.assertIn("그 지점의 여름 답", self.chat_markdown(at))  # 고른 뒤에는 다시 묻지 않고 답한다
 
     def test_ambiguous_location_waits_for_choice(self):
         at = self.start(FakeLLM([NO_PLAN, "고창 답 [근거 1]"]))

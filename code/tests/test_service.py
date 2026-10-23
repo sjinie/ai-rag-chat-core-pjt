@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import service
 from tests.fakes import FakeLLM
-from tests.fixtures import NO_PLAN, NOW, OBS, TODAY, make_deps
+from tests.fixtures import NO_PLAN, NOW, OBS, PLACE_PLAN, TODAY, make_deps
 
 
 class CheckReadyTest(unittest.TestCase):
@@ -81,6 +81,11 @@ class ServiceTest(unittest.TestCase):
         for call in llm.calls:
             sent_history = [m["content"] for m in call[1:-1]]
             self.assertEqual(sent_history, ["오늘 어때?", "맑습니다."])
+
+    def test_ask_returns_place_candidates(self):
+        answer = self.svc(FakeLLM([PLACE_PLAN, '{"selected": [1, 2]}'])).ask("108", "산이 많은 곳 여름 날씨는?", [])
+        self.assertEqual(len(answer.candidates), 2)
+        self.assertEqual(answer.text, "")
 
     def test_explore_returns_selected_stations(self):
         llm = FakeLLM(['{"selected": [1]}'])

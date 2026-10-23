@@ -16,6 +16,7 @@ BASE = {"ta_avg": 14.0, "ta_max": 19.0, "ta_min": 9.0, "hm_avg": 63.0, "ws_avg":
         "ta_avg_sd": 2.0, "ta_max_sd": 2.0, "ta_min_sd": 2.0, "hm_avg_sd": 10.0, "ws_avg_sd": 0.5, "rn_day_sd": 3.0,
         "n": 150, "years": 10}
 NO_PLAN = '{"need_cases": false, "queries": {}}'
+PLACE_PLAN = '{"need_cases": false, "queries": {}, "place": "겨울에 아주 춥고 산이 많은 곳"}'
 STATIONS = {"108": {"name": "서울", "fct_id": "11B10101", "address": "서울특별시 종로구 송월동", "sido": "서울특별시"},
             "105": {"name": "강릉", "fct_id": "11D20501", "address": "강원특별자치도 강릉시 용강동", "sido": "강원특별자치도"},
             "172": {"name": "고창", "fct_id": "21F10601", "address": "전북특별자치도 고창군 대산면 매산리", "sido": "전북특별자치도"},

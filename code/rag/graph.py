@@ -15,7 +15,7 @@ from domain.kma import fetch_latest_forecast, fetch_today_obs, live_forecast_doc
 from domain.prompts import SOURCES, Plan, answer_messages, ask_json, parse_plan, plan_messages
 from domain.stations import OFFICES, anomaly_sentence, office_for
 from domain.weather_db import get_baseline
-from rag.collect import collect, search_docs
+from rag.collect import collect, search_docs, select_stations
 from rag.evidence import SOURCE_KIND, Evidence, evidence_block, merge
 from rag.store import upsert_changed
 
@@ -39,6 +39,8 @@ class GraphState(TypedDict):
     history: list[dict]
     now: datetime
     force_cases: bool   # "오늘 날씨 리포트"는 질문과 상관없이 유사 사례를 넣는다 (F2010)
+    place_resolved: bool  # 지점 후보를 이미 골랐으면 다시 묻지 않는다
+    candidates: list[str]  # 지역을 특징으로만 말한 질문이면 답 대신 지점 후보를 돌려준다
     evidence: list[Evidence]
     steps: list[str]
     answer: str
@@ -88,6 +90,12 @@ def build_graph(deps: Deps):
         if plan is None:
             step("질문 분석에 실패해 지점 정보와 오늘 개황만으로 답합니다")
             plan = Plan(False, {s: [] for s in SOURCES})
+        # 지명 없이 "산이 많은 곳"처럼 말했으면 답하기 전에 어느 지점인지 고르게 한다 (사이드바 조건 탐색과 같은 방법)
+        if plan.place and not state.get("place_resolved"):
+            found = select_stations(deps.llm, deps.station_meta, plan.place)
+            if found and found != [stn]:
+                step(f"'{plan.place}'에 맞는 지점 {len(found)}곳을 찾았습니다")
+                return {"evidence": merge(station, today), "steps": state["steps"] + steps, "candidates": found}
         need_cases = plan.need_cases or state.get("force_cases", False)
 
         # (4) 유사 사례: 같은 관할 지방청 개황 유사도 → 관측 → 프롬프트2 선별 (ADR 0001)
@@ -114,9 +122,11 @@ def build_graph(deps: Deps):
             if not external:
                 step("외부 문서에서 관련 내용을 찾지 못했습니다")
 
-        return {"evidence": merge(station, today, cases, external), "steps": state["steps"] + steps}
+        return {"evidence": merge(station, today, cases, external), "steps": state["steps"] + steps, "candidates": []}
 
     def generate(state: GraphState) -> dict:
+        if state.get("candidates"):
+            return {"answer": ""}  # 지점을 고른 뒤 다시 묻는다
         reply = deps.llm.invoke(answer_messages(state["question"], evidence_block(state["evidence"]), state["history"]))
         return {"answer": reply.content}
 

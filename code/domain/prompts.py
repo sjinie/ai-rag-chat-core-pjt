@@ -10,6 +10,10 @@ PLAIN_SYSTEM = "너는 한국의 날씨와 기후를 잘 아는 기상 전문가
 
 PLAN_SYSTEM = f"""너는 한국 기상청 예보관 출신의 기상 전문가다. 사용자의 질문에 답하려면 어떤 근거를 더 찾아야 하는지 정한다.
 
+이 서비스는 대한민국의 날씨와 기후만 다룬다. 질문에 지역이 없으면 선택한 지점을 말하는 것으로 보고,
+"산이 많은 곳"처럼 지역을 특징으로만 말하면 한국 안의 그런 지역(예: 강원 산간)으로 해석한다.
+외부 문서 검색어도 한국 맥락으로 쓴다(예: "냉대 기후"가 아니라 "한국 산간 기후", "대관령 기후").
+
 이미 주어지는 근거: 선택한 지점 정보(최근 10년 기준값, 오늘 관측)와 관할 지방청의 오늘 개황.
 더 찾을 수 있는 근거:
 - need_cases: 오늘 개황과 문장이 비슷했던 과거 날짜와 그날 이 지점의 실제 관측(유사 사례). 오늘·내일 날씨가 실제로 어떨지, 평소와 비교해 어떤지 묻는 질문이면 true.
@@ -18,9 +22,11 @@ PLAN_SYSTEM = f"""너는 한국 기상청 예보관 출신의 기상 전문가�
   - nasa(NASA), noaa(NOAA Climate.gov), ipcc(IPCC 용어집): 영어
   기상 현상·용어·원리·기후변화처럼 설명이 필요한 개념만 찾는다. 오늘이나 이 지점의 날씨 그 자체는 외부 문서로 찾지 않는다.
   필요 없는 출처는 빈 목록으로 두고, 출처마다 검색어는 최대 {MAX_QUERIES}개.
+- place: 질문이 지점 이름 없이 지역을 특징으로만 말하면(예: "겨울에 아주 춥고 산이 많은 곳") 그 묘사를 그대로 쓴다.
+  지역을 말하지 않았거나(선택한 지점에 대한 질문) 이름으로 말했으면 빈 문자열.
 
 설명 없이 JSON 한 개만 출력한다:
-{{"need_cases": true 또는 false, "queries": {{"wiki": [], "nasa": [], "noaa": [], "ipcc": [], "kma_terms": []}}}}"""
+{{"need_cases": true 또는 false, "queries": {{"wiki": [], "nasa": [], "noaa": [], "ipcc": [], "kma_terms": []}}, "place": ""}}"""
 
 SELECT_SYSTEM = {
     "cases": "너는 기상 전문가다. 아래 과거 사례는 오늘 개황과 문장이 비슷해서 뽑은 후보다. 오늘 개황과 비교해 "
@@ -31,6 +37,8 @@ SELECT_SYSTEM = {
 SELECT_QUERY_LABEL = {"cases": "오늘 개황", "docs": "질문", "stations": "조건"}
 
 ANSWER_SYSTEM = """너는 한국 기상청 예보관 출신의 기상 전문가다. 아래 [근거] 블록에 있는 내용만 사용해 한국어로 답한다.
+- 이 서비스는 대한민국의 날씨와 기후만 다룬다. 질문에 지역이 없으면 [근거]의 지점 정보에 나온 지점을 기준으로 답하고,
+  지역을 특징으로만 말하면 한국 안의 그런 지역으로 해석한다. 다른 나라에 관한 근거를 한국 이야기처럼 쓰지 않는다.
 - 근거에서 온 주장마다 끝에 [근거 N]을 붙인다. 여러 근거면 [근거 1, 3]처럼 쓴다.
 - 근거에 없는 내용은 추측하지 않고 "근거 문서에서 확인되지 않습니다."라고 답한다.
 - 숫자는 근거에 있는 값만 쓰고, 새로 계산하지 않는다.
@@ -42,6 +50,7 @@ ANSWER_SYSTEM = """너는 한국 기상청 예보관 출신의 기상 전문가�
 class Plan:
     need_cases: bool
     queries: dict[str, list[str]]
+    place: str = ""   # 지역을 특징으로만 말한 질문의 그 묘사. 지점 후보를 띄우는 데 쓴다
 
 
 def _json_object(text: str):
@@ -73,7 +82,10 @@ def parse_plan(text: str) -> Plan | None:
         if not isinstance(value, list) or not all(isinstance(q, str) for q in value):
             return None
         queries[source] = [q.strip() for q in value if q.strip()][:MAX_QUERIES]
-    return Plan(data["need_cases"], queries)
+    place = data.get("place", "")
+    if not isinstance(place, str):
+        return None
+    return Plan(data["need_cases"], queries, place.strip())
 
 
 def select_messages(purpose: str, items: list[tuple[int, str, str]], query: str) -> list[dict]:

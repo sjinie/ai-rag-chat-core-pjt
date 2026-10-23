@@ -5,7 +5,7 @@ from unittest.mock import patch
 from rag.evidence import Evidence, cited, merge
 from rag.graph import build_graph
 from tests.fakes import FakeLLM
-from tests.fixtures import NO_PLAN, NOW, OBS, TODAY, make_deps
+from tests.fixtures import NO_PLAN, NOW, OBS, PLACE_PLAN, TODAY, make_deps
 
 
 class CountingAdapter:
@@ -30,10 +30,10 @@ class GraphTest(unittest.TestCase):
             p.stop()
         self.tmp.cleanup()
 
-    def run_graph(self, llm, question="오늘 서울 어때?", force_cases=False):
+    def run_graph(self, llm, question="오늘 서울 어때?", force_cases=False, place_resolved=False):
         return build_graph(make_deps(self.tmp.name, llm)).invoke(
             {"stn": "108", "question": question, "history": [], "now": NOW, "force_cases": force_cases,
-             "evidence": [], "steps": [], "answer": ""})
+             "place_resolved": place_resolved, "evidence": [], "steps": [], "answer": "", "candidates": []})
 
     def test_graph_has_two_nodes(self):
         nodes = set(build_graph(make_deps(self.tmp.name, FakeLLM([]))).get_graph().nodes) - {"__start__", "__end__"}
@@ -60,6 +60,18 @@ class GraphTest(unittest.TestCase):
     def test_force_cases_overrides_plan(self):
         out = self.run_graph(FakeLLM([NO_PLAN, '{"selected": [1]}', "답"]), force_cases=True)
         self.assertIn("유사 사례", [e.kind for e in out["evidence"]])
+
+    def test_place_description_returns_candidates_without_answer(self):
+        llm = FakeLLM([PLACE_PLAN, '{"selected": [1, 2]}'])
+        out = self.run_graph(llm, question="겨울에 아주 춥고 산이 많은 곳은 여름에 어때?")
+        self.assertEqual(len(out["candidates"]), 2)
+        self.assertEqual(out["answer"], "")
+        self.assertEqual(len(llm.calls), 2)  # 프롬프트1과 지점 선별만. 답변 LLM은 부르지 않는다
+
+    def test_resolved_place_answers_normally(self):
+        out = self.run_graph(FakeLLM([PLACE_PLAN, "대관령 여름 답"]), place_resolved=True)
+        self.assertEqual(out["candidates"], [])
+        self.assertEqual(out["answer"], "대관령 여름 답")
 
     def test_kma_failure_still_answers(self):
         def fail(*args):

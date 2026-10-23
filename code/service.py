@@ -5,7 +5,7 @@
 """
 import os
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 import chromadb
@@ -13,10 +13,11 @@ from langchain_openai import ChatOpenAI
 
 from config import CONFIG, ROOT, require_env
 from domain.kma import fetch_stations, fetch_today_obs
-from domain.prompts import PLAIN_SYSTEM, ask_json, parse_selected, select_messages
+from domain.prompts import PLAIN_SYSTEM
 from domain.stations import LABELS, VARIABLES, classify, match_stations
 from domain.weather_db import DB_PATH, connect, get_baseline
 from rag.cache import connect_cache
+from rag.collect import select_stations
 from rag.evidence import Evidence, cited
 from rag.graph import Deps, build_graph
 from rag.store import get_store
@@ -38,6 +39,7 @@ class Answer:
     cited: list[tuple[int, Evidence]]   # 답변이 실제로 인용한 근거만 (F2008)
     steps: list[str]
     has_cases: bool                     # 유사 사례가 문맥에 들어갔으면 "예보가 아님" 안내를 붙인다
+    candidates: list[str] = field(default_factory=list)  # 비어 있지 않으면 답 대신 "어느 지점으로?"를 묻는다
 
 
 def collection_counts() -> dict[str, int]:
@@ -67,15 +69,16 @@ class Service:
         self.deps = deps
 
     def ask(self, stn: str, question: str, history: list[dict], on_step=lambda s: None,
-            force_cases: bool = False) -> Answer:
+            force_cases: bool = False, place_resolved: bool = False) -> Answer:
         """RAG 채팅: retrieve → generate."""
         graph = build_graph(replace(self.deps, on_step=on_step))
         # 이전 답의 [근거 N]은 그때의 번호라, 남겨 두면 이번 답이 옛 번호를 베껴 다른 문서를 가리킬 수 있다
         history = [{**m, "content": CITATION.sub("", m["content"])} for m in history]
         out = graph.invoke({"stn": stn, "question": question, "history": history, "now": now(),
-                            "force_cases": force_cases, "evidence": [], "steps": [], "answer": ""})
+                            "force_cases": force_cases, "place_resolved": place_resolved,
+                            "evidence": [], "steps": [], "answer": "", "candidates": []})
         return Answer(out["answer"], cited(out["answer"], out["evidence"]), out["steps"],
-                      any(e.kind == "유사 사례" for e in out["evidence"]))
+                      any(e.kind == "유사 사례" for e in out["evidence"]), out["candidates"])
 
     def plain_chat(self, history: list[dict]) -> str:
         """단순 채팅: 전문가 역할과 대화 기록만. 근거·지점·날짜 정보 없음 (F2015 비교용)."""
@@ -99,12 +102,7 @@ class Service:
 
     def explore(self, condition: str) -> list[str]:
         """조건 기반 지점 탐색(F2011): 지점 프로필 유사도 상위 15개 → 프롬프트2가 조건에 맞는 지점만 고른다."""
-        docs = self.deps.station_meta.similarity_search(condition, k=EXPLORE_K)
-        items = [(i, d.metadata.get("name", d.id), " ".join(d.page_content.splitlines()[:2]))
-                 for i, d in enumerate(docs, 1)]
-        picked = ask_json(self.deps.llm, select_messages("stations", items, condition),
-                          lambda text: parse_selected(text, set(range(1, len(docs) + 1))))
-        return [docs[i - 1].id for i in picked or []]
+        return select_stations(self.deps.llm, self.deps.station_meta, condition, EXPLORE_K)
 
     def resolve_location(self, text: str) -> list[str]:
         return match_stations(text, self.deps.stations)

@@ -40,6 +40,7 @@ state.setdefault("stn", "108")
 state.setdefault("histories", {})
 for key in ("pending_rag", "pending_plain", "held_question", "report"):
     state.setdefault(key, None)
+state.setdefault("place_resolved", False)
 state.setdefault("candidates", [])
 state.setdefault("explored", [])
 
@@ -60,17 +61,18 @@ def pick(stn: str) -> None:
 
 def pick_candidate(stn: str) -> None:
     pick(stn)
-    state.pending_rag, state.held_question = state.held_question, None
+    state.pending_rag, state.held_question, state.place_resolved = state.held_question, None, True
 
 
 def keep_current() -> None:
     state.pending_rag, state.held_question, state.candidates = state.held_question, None, []
+    state.place_resolved = True
 
 
 def on_rag_submit() -> None:
     """채팅에 다른 지점의 지명이 있으면 바꿀지 먼저 묻는다. '양산(우산)'처럼 잘못 잡힐 수 있어 조용히 바꾸지 않는다."""
     question = state.rag_in
-    state.candidates, state.held_question = [], None  # 새 질문이 오면 묻던 선택은 버린다
+    state.candidates, state.held_question, state.place_resolved = [], None, False  # 새 질문이면 묻던 선택은 버린다
     found = svc.resolve_location(question)
     if found and found != [state.stn]:
         state.candidates, state.held_question = found, question
@@ -155,7 +157,7 @@ chats = history(stn)
 
 with left:
     st.subheader("단순 채팅")
-    st.caption("근거 없이 LLM만으로 답합니다. 지점·날짜도 질문에 직접 써야 압니다.")
+    st.caption("근거 없이 LLM만으로 답합니다.")  # 두 열의 설명이 같은 줄 수여야 아래 대화창 높이가 맞는다
     box = st.container(height=560)
     for m in chats["plain"]:
         box.chat_message(m["role"]).markdown(m["content"])
@@ -174,18 +176,19 @@ with left:
 
 with right:
     st.subheader("RAG 채팅")
-    st.caption("오늘 개황, 과거 유사 사례, 허용된 외부 문서를 근거로 답하고 인용한 근거를 보여 줍니다.")
-    if state.candidates:
-        st.info("질문에 다른 지점의 지명이 있습니다. 어느 지점으로 답할까요?")
-        for c in state.candidates:
-            st.button(label(c), key=f"cand_{c}", on_click=pick_candidate, args=(c,))
-        st.button(f"지금 지점 그대로: {label(stn)}", key="keep_current", on_click=keep_current)
+    st.caption("근거를 찾아 답하고, 인용한 근거를 보여 줍니다.")
     box = st.container(height=560)
     for m in chats["rag"]:
         with box.chat_message(m["role"]):
             st.markdown(m["content"])
             if m["role"] == "assistant":
                 render_sources(m)
+    if state.candidates:  # 대화창 안에 띄워야 왼쪽 대화창과 높이가 어긋나지 않는다
+        with box.chat_message("assistant"):
+            st.markdown(f"질문 \"{state.held_question}\"에 다른 지점의 지명이 있습니다. 어느 지점으로 답할까요?")
+            for c in state.candidates:
+                st.button(label(c), key=f"cand_{c}", on_click=pick_candidate, args=(c,))
+            st.button(f"지금 지점 그대로: {label(stn)}", key="keep_current", on_click=keep_current)
     st.chat_input("RAG 채팅에 질문하기 (지명을 쓰면 그 지점으로 바뀝니다)", key="rag_in", on_submit=on_rag_submit)
     if state.pending_rag:
         question, state.pending_rag = state.pending_rag, None
@@ -195,11 +198,16 @@ with right:
         with box.chat_message("assistant"):
             with st.status("근거를 찾는 중...") as status:
                 try:
-                    answer = svc.ask(stn, question, before, on_step=status.write)
+                    answer = svc.ask(stn, question, before, on_step=status.write, place_resolved=state.place_resolved)
                     status.update(label="근거 확인 완료", state="complete")
                 except Exception:
                     answer = None
                     status.update(label=ERROR, state="error")
+            state.place_resolved = False
+            if answer and answer.candidates:  # "산이 많은 곳"처럼 말한 질문: 지점을 고른 뒤 그 지점 대화에서 답한다
+                chats["rag"].pop()
+                state.candidates, state.held_question = answer.candidates, question
+                st.rerun()
             if answer:
                 message = answer_message(answer)
                 st.markdown(message["content"])
