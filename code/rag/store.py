@@ -18,15 +18,29 @@ def get_store(collection: str) -> Chroma:
     )
 
 
-def upsert_missing(store: Chroma, ids: list[str], texts: list[str], metadatas: list[dict]) -> int:
-    """아직 없는 ID만 임베딩해 넣는다. 같은 ID를 다시 넣어도 덮어쓰기만 된다. (F2002)"""
-    existing = set(store.get(include=[])["ids"])
-    todo = [i for i, doc_id in enumerate(ids) if doc_id not in existing]
+def upsert_changed(store: Chroma, ids: list[str], texts: list[str], metadatas: list[dict]) -> int:
+    """없거나 내용이 바뀐 ID만 임베딩해 넣고, 메타데이터만 바뀐 ID는 임베딩 없이 고친다. (F2002)
+
+    반환값은 추가·갱신한 건수. 같은 ID는 덮어쓰기만 된다.
+    """
+    existing, offset = {}, 0
+    while True:  # 한 번에 다 읽으면 SQLite 변수 개수 한도(too many SQL variables)에 걸려 나눠 읽는다
+        page = store.get(include=["documents", "metadatas"], limit=5000, offset=offset)
+        existing.update({i: (d, m) for i, d, m in zip(page["ids"], page["documents"], page["metadatas"])})
+        if len(page["ids"]) < 5000:
+            break
+        offset += 5000
+    meta_only = [i for i, doc_id in enumerate(ids)
+                 if doc_id in existing and existing[doc_id][0] == texts[i] and existing[doc_id][1] != metadatas[i]]
     batch = CONFIG["chroma"]["embed_batch"]
+    for start in range(0, len(meta_only), batch):
+        chunk = meta_only[start:start + batch]
+        store._collection.update(ids=[ids[i] for i in chunk], metadatas=[metadatas[i] for i in chunk])
+    todo = [i for i, doc_id in enumerate(ids) if doc_id not in existing or existing[doc_id][0] != texts[i]]
     for start in range(0, len(todo), batch):
         chunk = todo[start:start + batch]
         store.add_texts(
             texts=[texts[i] for i in chunk], metadatas=[metadatas[i] for i in chunk], ids=[ids[i] for i in chunk]
         )
         print(f"  {store._collection.name}: {min(start + batch, len(todo))}/{len(todo)}건 임베딩", flush=True)
-    return len(todo)
+    return len(todo) + len(meta_only)

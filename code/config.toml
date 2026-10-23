@@ -2,13 +2,18 @@
 
 [llm]
 base_url = "https://gms.ssafy.io/gmsapi/api.openai.com/v1/"
-chat_model = "gpt-5.4-nano"
+chat_model = "gpt-6-luna"   # 프롬프트 3개 모두 같은 모델 (nano보다 성능 좋고 저렴)
 embedding_model = "text-embedding-3-small"
 
 [climate]
 start_year = 2016
 end_year = 2025
 window_days = 7          # 기준값 = 최근 10년 같은 날짜 ±7일 관측 평균
+
+[forecast]
+start_year = 2021        # 단기예보 개황 임베딩 기간 (실제 관측은 climate 기간 전체가 DB에 있다)
+end_year = 2025
+issue_hour = "05"        # 하루 3회(05·11·17시) 중 이 발표분만 쓴다
 
 [chroma]
 persist_dir = "data/chroma"

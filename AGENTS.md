@@ -23,24 +23,38 @@ SSAFY AI 코어 프로젝트 2회차 — **RAG 기반 도메인 지식 서비스
 | 명세 개념 | 이 프로젝트 |
 |---|---|
 | 항목 (약 100건) | ASOS 종관 지점 97개 |
-| 항목 선택 (F2009) | 사용자가 chat input으로 위치 입력 → 가장 가까운 지점 + 예보 격자(nx, ny)로 변환. 사이드바 지점 목록과 동기화. 대화 기록은 지점별로 분리 |
+| 항목 선택 (F2009) | 채팅 입력과 사이드바 지점 목록 둘 다 사용, 서로 동기화. 채팅의 위치는 **지점명·시/군/구 글자 매칭**으로 지점을 찾고, 없거나 여럿이면 후보를 보여 고르게 한다. 관할 지방청은 예보구역코드 `FCT_ID` 앞자리(`office_for`). 대화 기록은 지점별로 분리 |
 | 기후 항목 6종 | 최고기온 · 평균기온 · 최저기온 · 상대습도 · 평균풍속 · 강수량 |
-| 비교 기준 | **최근 10년(2016~2025) ±7일 관측 평균**. 공식 평년값(30년)이 아니므로 화면·답변에서 "평년값"이라 부르지 않고 "최근 10년 평균"이라 쓴다 |
-| 외부 문서 | 위키백과(지역·기상현상, 항목 자체 문서) + 기상청 이상기후 보고서·용어/특보 기준 PDF. 출처 종류(`wiki`/`pdf`)를 근거에 표시 (F2016) |
-| 도메인 특화 기능 (F2010) | 오늘 vs 최근 10년 평균 비교표 + 근거 기반 해설 |
+| 비교 기준 | **최근 10년(2016~2025) ±7일 관측 평균·표준편차**. 공식 평년값(30년)이 아니므로 화면·답변에서 "평년값"이라 부르지 않고 "최근 10년 평균"이라 쓴다 |
+| 항목 자체 문서 (F2003·F2004) | **오늘 개황**(관할 지방청의 오늘 최신 개황). 근거 후보에 항상 들어간다 |
+| 날씨 질문 (핵심 흐름) | **유사 사례**: 오늘 개황의 오늘 문단으로 `forecast_texts`에서 **같은 관할 지방청** 안의 유사도 상위 10건(날짜 조건 없음) → 각 날짜의 선택 지점 관측 + 그날 기준값과의 차이를 붙여 후보로 → **프롬프트2가 질문에 맞는 사례만 선별**(최대 5건) → 선별 결과는 (지점, 개황 발표시각)별로 캐시. 다시 색인하지 않는다. 화면에 "과거 유사 사례 참고이며 예보가 아님" 표시 |
+| 질문 종류 판단 | 프롬프트1(도메인 전문가)이 retrieve 노드 안에서 판단: 유사 사례가 필요한지, 어떤 허용 출처에 어떤 검색어로 찾을지. 필요 없는 근거는 찾지 않는다 (예: "오늘 날씨"를 위키에서 검색하지 않음) |
+| 외부 문서 | **허용 출처**에서만 가져온다: 한국어 위키백과, NASA Climate, NOAA Climate.gov, IPCC 용어집(AR6 WG1 부록 VII PDF), 기상청 날씨누리 특보 기준(forecast03)·예보용어(forecast05). 위키·NASA(WordPress 검색 API)·NOAA(robots가 `/search`를 막아 사이트맵의 Climate Q&A·Understanding Climate 목록 사용)는 **질문할 때 수집**, IPCC·기상청 페이지는 고정 문서라 **미리 한 번 색인**(용어 하나 = 청크 하나). 프롬프트2로 선별 → 본문·원문 URL 수집 → `climate_docs` 색인. **허용 목록 밖 도메인은 코드에서 차단** (리다이렉트 포함). 여러 출처 결합(F2016)은 처음부터 구현 |
+| 도메인 특화 기능 (F2010) | 유사 사례의 실제 날씨 요약 + 오늘 vs 최근 10년 기준값 비교. 사이드바 "오늘 날씨 리포트" 버튼 |
+| 답변 모드 | **단순 채팅**(전문가 역할 system 메시지 + 대화만, 지점·날짜도 사용자가 말해야 앎, 근거 없음)과 **RAG 채팅**을 코드로 분리하고, 화면 양쪽에 두 채팅을 나란히 두고 **입력창도 각각 따로** 둔다. 기록도 양쪽 따로, 둘 다 지점별로 저장 (F2015 전후 비교에도 사용). 대표 질문(확정): ① 오늘 서울 기온이 최근 10년 평균보다 높아? ② 오늘 광주 예보와 비슷했던 날에는 실제로 비가 얼마나 왔어? ③ 열대야 기준이 뭐야? ④ 대관령은 왜 한겨울에 다른 곳보다 훨씬 추워? ⑤ 온실효과가 한반도 여름 기온에 어떤 영향을 줘? |
+| 검색어 언어 | 프롬프트1이 출처별 언어로 검색어를 낸다 (위키·기상청 = 한국어, NASA·NOAA·IPCC = 영어). 답변은 한국어 |
+| 대화 기록 | references처럼 대화 전체를 `st.session_state`에 저장하고 매번 history 전체를 넘긴다. 지점별로 분리 |
+| 오늘 개황 시각 | 05시 이전에는 전날 17시 발표분을 쓰고 근거 제목에 발표 시각을 표시 |
+| 유사 사례 후보 | 선택 지점의 관측이 없는 날은 빼고 다음 순위로 채워 10건 유지 |
+| MMR (F2014) | 외부 문서 청크 검색에만 적용(20개 → 4개). `search_type`으로 similarity/MMR 전환, 비교 스크립트로 차이 출력 |
+| 검증 기록 | 명세 4장 체크리스트·사후 검증·F2014/F2015 비교는 `docs/검증결과.md`, 캡처는 `docs/screenshots/` |
+| 범위 | 심화 F2014~F2016은 처음부터 구현. **F2013(Vue.js 프론트엔드)은 아직 구현하지 않는다** — 화면은 Streamlit chat. 단 핵심 기능은 `service.ask(...)` 하나로 두어 나중에 FastAPI가 같은 함수를 쓰게 한다 |
 
-- **편차·평균 계산은 Python 코드로 한다.** LLM에는 계산 결과만 근거로 넘기고 설명만 맡긴다.
+- **편차·평균·판정(높음/낮음)은 Python 코드로 한다.** LLM에는 계산 결과만 근거로 넘기고 설명만 맡긴다.
+- 숫자는 임베딩하지 않는다. 임베딩은 문장(예보 개황, 외부 문서, 지점 프로필)에만 쓰고, 숫자는 SQLite에서 날짜·지점으로 조회한다.
 - 위험 도메인은 아니지만 "공식 특보·예보는 기상청 발표를 확인하세요" 안내를 표시한다.
 
-## 데이터 저장 (Chroma)
+## 데이터 저장
 
-| 컬렉션 | 내용 | ID 규칙 | 조회 |
+| 저장소 | 내용 | 키 | 조회 |
 |---|---|---|---|
-| `station_meta` | 지점 정보 + 월별 10년 평균 | `{지점번호}` | 선택 지점은 ID로 직접, 조건 탐색(F2011)은 유사도 |
-| `weather_data` | 기준값·관측·예보 캐시 | `base:{지점}:{MMDD}`, `obs:{지점}:{관측시각}`, `fcst:{nx_ny}:{발표시각}` | ID 직접 조회 |
-| `climate_docs` | 위키·PDF 청크 | `{지점번호}:{문서ID}:{순번}`, 공통 PDF는 `common:{문서ID}:{순번}` | 유사도/MMR, 필터 `지점번호 or common` |
+| Chroma `station_meta` | 지점 프로필(주소·고도·산지·관할 지방청) + 월별 10년 평균 | `{지점번호}` | 선택 지점은 ID로 직접, 조건 탐색(F2011)은 유사도 |
+| Chroma `forecast_texts` | 지방청별 단기예보 개황 '종합·오늘' 문단, 2021~2025, 05시 발표 | `fcst:{지방청}:{YYYYMMDD}` | 유사도 + 필터(같은 관할 지방청만). 메타데이터 `body`에 원문 전체, `url`·`collected_at` |
+| Chroma `climate_docs` | 외부 문서 청크 | `{출처}:{문서ID}:{순번}` | 유사도/MMR |
+| SQLite `data/weather.db` `obs_daily` | 지점 × 날짜 실제 관측 6종 (2016~2025) | `(stn, date)` | `get_obs` |
+| SQLite `data/weather.db` `baseline` | 지점 × MMDD 10년 평균·표준편차·표본 수 | `(stn, mmdd)` | `get_baseline` |
 
-- 한 번 받은 데이터는 DB에 저장하고 재사용한다. 단 관측·예보는 **ID에 시각을 넣어** 만료시킨다 — 어제 데이터로 오늘을 답하면 안 된다.
+- 한 번 받은 데이터는 저장하고 재사용한다. 오늘 예보·관측은 **키에 발표·관측 시각을 넣어** 만료시킨다 — 어제 데이터로 오늘을 답하면 안 된다.
 - 재색인해도 같은 ID는 덮어쓰기만 일어나야 한다 (F2002).
 - 이미 수집한 검색어는 다시 수집하지 않는다 (F2004, NF2002).
 
@@ -53,9 +67,11 @@ SSAFY AI 코어 프로젝트 2회차 — **RAG 기반 도메인 지식 서비스
 | 공식 평년값 (참고용) | `typ01/url/sfc_norm1.php?tmst=2021&norm=D&stn=0&MM1=&DD1=&MM2=&DD2=` | ✅ 동작. 대구·전주·세종·홍성 등 13개 ASOS 지점 없음 |
 | 시간자료 (현재 날씨) | `typ01/url/kma_sfctm2.php` | ❌ 403 활용신청 필요 |
 | 단기예보·초단기실황 | `typ02/openApi/VilageFcstInfoService_2.0/getVilageFcst`, `getUltraSrtNcst` | ❌ 403 활용신청 필요 |
-| 지점 정보 | `typ01/url/stn_inf.php?inf=SFC` | ❌ 403 활용신청 필요 |
+| 지점 정보 | `typ01/url/stn_inf.php?inf=SFC` | ✅ 동작. 영문명에 공백이 있는 행(Jeongseon Gun)은 열이 밀린다 → `parse_stations` 참고. 2026 주소 기준 광주·전남은 "전남광주통합특별시" |
+| 단기예보 개황 (원문 텍스트) | `typ01/url/fct_afs_ds.php?stn=지방청&tmfc1=YYYYMMDDHHmm&tmfc2=` | ✅ 동작. 1년 범위 1회 호출 가능. 지방청 9곳 × 하루 3회(05·11·17시). 2016년부터 확인 |
+| 특보 자료 | `typ01/url/wrn_met_data.php?wrn=A&reg=0&tmfc1=&tmfc2=` | ✅ 동작. 텍스트가 아니라 코드(특보구역·종류·수준) — 구역 코드표 미확보 |
 
-- 응답은 **EUC-KR** — `response.content.decode("euc-kr")`. `#`으로 시작하는 줄은 주석.
+- 응답은 **EUC-KR** 계열 — `response.content.decode("cp949")` (개황 원문에 EUC-KR 밖 글자가 있어 euc-kr로는 실패). `#`으로 시작하는 줄은 주석.
 - 결측값은 `-9`, `-99`. 단 일강수량 `RN_DAY = -9.0`은 "강수 없음"이므로 0으로 처리한다.
 - `kma_sfcdd(3)` 열 위치(0부터): `WS_AVG 2`, `TA_AVG 10`, `TA_MAX 11`, `TA_MIN 13`, `HM_AVG 18`, `RN_DAY 38`.
 - 기상청 API에는 시/도 단위가 없다. 지점번호(관측) / 격자 nx,ny(예보) 단위다.
@@ -65,7 +81,7 @@ SSAFY AI 코어 프로젝트 2회차 — **RAG 기반 도메인 지식 서비스
 Python 3.10+ · Streamlit 1.62.0 · LangChain 1.3.14 · LangGraph 1.2.10 · LangSmith 0.10.17 · langchain-core 1.6.0 · langchain-openai 1.4.3 · langchain-community 0.4.2 · langchain-chroma 1.1.0 · langchain-text-splitters 1.1.2 · ChromaDB 1.5.9 · OpenAI 2.54.0 · Requests 2.34.2 · python-dotenv 1.2.3 · typing-extensions 4.16.0
 (심화) fastapi 0.141.1 · uvicorn[standard] 0.52.4 · pydantic 2.13.5 · (PDF) pypdf
 
-- LLM은 SSAFY GMS 경유: `ChatOpenAI(model=..., api_key=GMS_KEY, base_url="https://gms.ssafy.io/gmsapi/api.openai.com/v1/")`. 모델명은 설정 파일에 둔다.
+- LLM은 SSAFY GMS 경유 (references/streamlit_lab 방식): `ChatOpenAI(model=..., api_key=GMS_KEY, base_url=GMS_BASE_URL)`, `GMS_BASE_URL = "https://gms.ssafy.io/gmsapi/api.openai.com/v1/"`. 모델은 **gpt-6-luna로 통일**(프롬프트 3개 모두), 임베딩은 text-embedding-3-small. 모델명은 `config.toml`에 둔다.
 - `.env` 키: `GMS_KEY`, `KMA_API_KEY`, `WIKI_CONTACT`(영문 이메일).
 
 ## 구조
@@ -74,29 +90,33 @@ Python 3.10+ · Streamlit 1.62.0 · LangChain 1.3.14 · LangGraph 1.2.10 · Lang
 
 ```
 code/
-  config.toml           # ✅ 모델명, 10년 기간·창 크기, Chroma 경로 (이후 chunk_size·top_k·search_type 추가)
+  config.toml           # ✅ 모델명, 기간·창 크기, 개황 기간·발표시각, Chroma 경로 (이후 chunk_size·top_k·search_type 추가)
   config.py             # ✅ config.toml + 루트 .env 로드
-  build_climate.py      # ✅ 10년 일자료 수집 → 기준값 계산 → station_meta·weather_data 색인
+  build_climate.py      # ✅ 10년 일자료 → weather.db(obs_daily·baseline) + station_meta 색인
+  build_forecast.py     # ✅ 5년 단기예보 개황 → forecast_texts 색인
   app.py                # Streamlit UI (step7_skeleton.py에서 출발)
   domain/               # 도메인 종속 코드는 여기만
-    kma.py              # ✅ API허브 호출·파싱 (원문은 data/raw에 캐시)
-    stations.py         # ✅ 지점→시/도 매핑, 10년 ±7일 기준값, 색인 텍스트
+    kma.py              # ✅ API허브 호출·파싱 (원문은 data/raw에 캐시), 개황 '오늘' 문단 추출
+    stations.py         # ✅ 10년 ±7일 평균·표준편차, 관할 지방청 매핑, 지점 텍스트
+    weather_db.py       # ✅ SQLite 정형 데이터 (obs_daily, baseline)
     prompts.py          # 프롬프트 3개 (검색어 추출 / 후보 선별 / 답변 생성)
   rag/
-    store.py            # ✅ Chroma 컬렉션, 없는 ID만 임베딩
-    wiki.py             # 위키 검색·본문 (step8 재사용)
-    collect.py          # 프롬프트1 → 검색 → 프롬프트2 → 수집 → 청킹·색인
+    store.py            # ✅ Chroma 컬렉션, 없거나 바뀐 ID만 임베딩
+    web.py              # 허용 목록 도메인만 호출하는 HTTP (User-Agent·재시도·간격)
+    collect.py          # 프롬프트1 → 허용 출처 검색 → 프롬프트2 → 수집 → 청킹·색인
     graph.py            # LangGraph retrieve / generate
 data/
   raw/                  # API 원문 캐시 (git 제외)
   chroma/               # 벡터DB (git 제외)
+  weather.db            # 정형 날씨 데이터 (git 제외)
   sources.md            # 출처·이용 조건
 ```
 
 ## 작업 방식
 
 - 가상환경: 루트 `.venv` (`pip install -r requirements.txt`)
-- 실행(`code/`에서): 색인 `python build_climate.py` / 앱 `streamlit run app.py` / 자체 점검 `python domain/stations.py`
+- 실행(`code/`에서): 색인 `python build_climate.py`, `python build_forecast.py` / 앱 `streamlit run app.py`
+- 자체 점검(`code/`에서): `python domain/stations.py`, `python -m domain.kma`
 - 새 로직(파싱, 편차 계산, 근거 번호 추출 등)에는 작은 assert 기반 검증을 남긴다.
 - 검증은 실행 결과로 증명한다 — 명세 4장 체크리스트(색인 수 일치, 재색인 시 청크 수 불변, 근거 번호와 표시 목록 일치, 키 없음/색인 없음 안내 등).
 - 커밋 메시지·문서는 한국어로 쓴다.

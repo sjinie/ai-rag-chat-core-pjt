@@ -3,39 +3,23 @@ import calendar
 from collections import defaultdict
 from datetime import date
 
-# shortcut: 지점명·시/도는 수기 매핑. stn_inf.php 활용신청이 승인되면 API 응답으로 교체한다.
-STATIONS = {
-    "90": ("속초", "강원"), "93": ("북춘천", "강원"), "95": ("철원", "강원"), "98": ("동두천", "경기"),
-    "99": ("파주", "경기"), "100": ("대관령", "강원"), "101": ("춘천", "강원"), "102": ("백령도", "인천"),
-    "104": ("북강릉", "강원"), "105": ("강릉", "강원"), "106": ("동해", "강원"), "108": ("서울", "서울"),
-    "112": ("인천", "인천"), "114": ("원주", "강원"), "115": ("울릉도", "경북"), "119": ("수원", "경기"),
-    "121": ("영월", "강원"), "127": ("충주", "충북"), "129": ("서산", "충남"), "130": ("울진", "경북"),
-    "131": ("청주", "충북"), "133": ("대전", "대전"), "135": ("추풍령", "충북"), "136": ("안동", "경북"),
-    "137": ("상주", "경북"), "138": ("포항", "경북"), "140": ("군산", "전북"), "143": ("대구", "대구"),
-    "146": ("전주", "전북"), "152": ("울산", "울산"), "155": ("창원", "경남"), "156": ("광주", "광주"),
-    "159": ("부산", "부산"), "162": ("통영", "경남"), "165": ("목포", "전남"), "168": ("여수", "전남"),
-    "169": ("흑산도", "전남"), "170": ("완도", "전남"), "172": ("고창", "전북"), "174": ("순천", "전남"),
-    "177": ("홍성", "충남"), "181": ("서청주", "충북"), "184": ("제주", "제주"), "185": ("고산", "제주"),
-    "188": ("성산", "제주"), "189": ("서귀포", "제주"), "192": ("진주", "경남"), "201": ("강화", "인천"),
-    "202": ("양평", "경기"), "203": ("이천", "경기"), "211": ("인제", "강원"), "212": ("홍천", "강원"),
-    "216": ("태백", "강원"), "217": ("정선군", "강원"), "221": ("제천", "충북"), "226": ("보은", "충북"),
-    "232": ("천안", "충남"), "235": ("보령", "충남"), "236": ("부여", "충남"), "238": ("금산", "충남"),
-    "239": ("세종", "세종"), "243": ("부안", "전북"), "244": ("임실", "전북"), "245": ("정읍", "전북"),
-    "247": ("남원", "전북"), "248": ("장수", "전북"), "251": ("고창군", "전북"), "252": ("영광군", "전남"),
-    "253": ("김해시", "경남"), "254": ("순창군", "전북"), "255": ("북창원", "경남"), "257": ("양산시", "경남"),
-    "258": ("보성군", "전남"), "259": ("강진군", "전남"), "260": ("장흥", "전남"), "261": ("해남", "전남"),
-    "262": ("고흥", "전남"), "263": ("의령군", "경남"), "264": ("함양군", "경남"), "266": ("광양시", "전남"),
-    "268": ("진도군", "전남"), "271": ("봉화", "경북"), "272": ("영주", "경북"), "273": ("문경", "경북"),
-    "276": ("청송군", "경북"), "277": ("영덕", "경북"), "278": ("의성", "경북"), "279": ("구미", "경북"),
-    "281": ("영천", "경북"), "283": ("경주시", "경북"), "284": ("거창", "경남"), "285": ("합천", "경남"),
-    "288": ("밀양", "경남"), "289": ("산청", "경남"), "294": ("거제", "경남"), "295": ("남해", "경남"),
-    "296": ("북부산", "부산"),
-}
-
 VARIABLES = ["ta_avg", "ta_max", "ta_min", "hm_avg", "ws_avg", "rn_day"]
 LABELS = {"ta_avg": ("평균기온", "℃"), "ta_max": ("최고기온", "℃"), "ta_min": ("최저기온", "℃"),
           "hm_avg": ("상대습도", "%"), "ws_avg": ("평균풍속", "m/s"), "rn_day": ("강수량", "mm")}
 DAYS = 366  # 2월 29일을 포함한 날짜 칸 수
+
+# 단기예보 개황을 내는 지방청. 예보구역코드(FCT_ID) 앞자리로 지점의 관할 지방청을 정한다.
+OFFICES = {"109": "수도권기상청", "105": "강원지방기상청", "131": "청주기상지청", "133": "대전지방기상청",
+           "146": "전주기상지청", "156": "광주지방기상청", "143": "대구지방기상청", "159": "부산지방기상청",
+           "184": "제주지방기상청"}
+FCT_PREFIX_OFFICE = [("11A", "109"), ("11B", "109"), ("11C1", "131"), ("11C2", "133"), ("11D", "105"),
+                     ("11E", "143"), ("11F1", "146"), ("11F2", "156"), ("11G", "184"), ("11H1", "143"), ("11H2", "159"),
+                     ("21F1", "146"), ("21F2", "156")]  # 21F = 전북·전남 서해안 구역
+
+
+def office_for(fct_id: str) -> str:
+    """예보구역코드 → 관할 지방청 번호. 11A 백령도는 수도권, 11E 울릉도·독도는 대구청 관할."""
+    return next(office for prefix, office in FCT_PREFIX_OFFICE if fct_id.startswith(prefix))
 
 
 def day_index(month: int, day: int) -> int:
@@ -50,10 +34,11 @@ def all_days() -> list[tuple[int, int]]:
 def compute_baselines(rows: list[dict], window: int) -> dict:
     """지점별·날짜별 '최근 N년 같은 날짜 ±window일' 평균.
 
-    반환: {stn: {(월, 일): {"ta_avg": 14.1, ..., "n": 150, "years": 10}}}
-    결측은 평균에서 뺀다. 연말·연초는 앞뒤 해를 넘어 이어진다(12/28 창에 1/3 포함).
+    반환: {stn: {(월, 일): {"ta_avg": 14.1, "ta_avg_sd": 2.3, ..., "n": 150, "years": 10}}}
+    _sd는 표준편차(오늘 값이 '매우 높음'인지 판정할 때 쓴다). 결측은 평균에서 뺀다. 연말·연초는 앞뒤 해를 넘어 이어진다(12/28 창에 1/3 포함).
     """
     sums = defaultdict(lambda: {v: [0.0] * DAYS for v in VARIABLES})
+    squares = defaultdict(lambda: {v: [0.0] * DAYS for v in VARIABLES})
     counts = defaultdict(lambda: {v: [0] * DAYS for v in VARIABLES})
     years = defaultdict(set)
     for row in rows:
@@ -61,6 +46,7 @@ def compute_baselines(rows: list[dict], window: int) -> dict:
         for v in VARIABLES:
             if row[v] is not None:
                 sums[row["stn"]][v][i] += row[v]
+                squares[row["stn"]][v][i] += row[v] ** 2
                 counts[row["stn"]][v][i] += 1
         if row["ta_avg"] is not None:
             years[row["stn"]].add(row["date"][:4])
@@ -74,7 +60,10 @@ def compute_baselines(rows: list[dict], window: int) -> dict:
             entry = {}
             for v in VARIABLES:
                 n = sum(counts[stn][v][i] for i in span)
-                entry[v] = round(sum(sums[stn][v][i] for i in span) / n, 1) if n else None
+                mean = sum(sums[stn][v][i] for i in span) / n if n else None
+                var = sum(squares[stn][v][i] for i in span) / n - mean ** 2 if n else None
+                entry[v] = round(mean, 1) if n else None
+                entry[f"{v}_sd"] = round(max(var, 0.0) ** 0.5, 2) if n else None
             entry["n"] = sum(counts[stn]["ta_avg"][i] for i in span)
             entry["years"] = len(years[stn])
             result[stn][(m, d)] = entry
@@ -108,20 +97,13 @@ def format_values(entry: dict, rain_label: str = "강수량") -> str:
     return ", ".join(parts)
 
 
-def station_text(stn: str, months: dict, period: str) -> str:
-    """항목 1건 = 지점 하나의 색인 텍스트. (F2001)"""
-    name, sido = STATIONS[stn]
-    lines = [f"{name}({stn}) 관측 지점 · {sido}", f"최근 10년({period}) 월별 평균:"]
+def station_text(stn: str, info: dict, months: dict, period: str) -> str:
+    """항목 1건 = 지점 하나의 색인 텍스트. 위치·고도를 넣어야 '산간 지역' 같은 조건 검색에 걸린다. (F2001, F2011)"""
+    terrain = "산지 관측소" if info["mountain"] else "관측소"
+    lines = [f"{info['name']}({stn}) {terrain} · {info['address']} · 해발 {info['height']:.0f}m",
+             f"최근 10년({period}) 월별 평균:"]
     lines += [f"{m}월: {format_values(months[m], '월강수량')}" for m in range(1, 13)]
     return "\n".join(lines)
-
-
-def baseline_text(stn: str, month: int, day: int, entry: dict, period: str, window: int) -> str:
-    name, sido = STATIONS[stn]
-    return (
-        f"{name}({stn}, {sido}) {month}월 {day}일 최근 10년({period}, ±{window}일) 평균: "
-        f"{format_values(entry, '일강수량')} (표본 {entry['n']}일, {entry['years']}개 연도)"
-    )
 
 
 if __name__ == "__main__":
@@ -134,6 +116,8 @@ if __name__ == "__main__":
     b = compute_baselines(rows, window=1)["1"]
     assert b[(1, 1)]["ta_avg"] == 15.0 and b[(1, 1)]["n"] == 2 and b[(1, 1)]["years"] == 2
     assert b[(1, 1)]["hm_avg"] == 1.0  # 결측(None)은 빠진다
+    assert b[(1, 1)]["ta_avg_sd"] == 5.0  # 10과 20의 표준편차
+    assert office_for("11D10502") == "105" and office_for("11F20303") == "156" and office_for("11C20101") == "133"
     assert b[(6, 1)]["ta_avg"] is None and b[(6, 1)]["n"] == 0
     # 1월 중 값이 있는 날: 1/1 창(12/31 0mm, 1/1 4mm) = 2mm, 1/2 창(1/1 4mm) = 4mm → 평균 3mm × 31일
     assert monthly_summary(b)[1]["rn_day"] == 93.0
