@@ -15,6 +15,19 @@ start_year = 2021        # 단기예보 개황 임베딩 기간 (실제 관측�
 end_year = 2025
 issue_hour = "05"        # 하루 3회(05·11·17시) 중 이 발표분만 쓴다
 
+[rag]
+chunk_size = 1000        # 외부 문서 청크 크기(자)
+chunk_overlap = 200      # 청크 중복 길이(자)
+top_k = 4                # 근거로 넣을 외부 문서 청크 수
+fetch_k = 20             # MMR일 때 먼저 가져올 후보 수
+search_type = "similarity"   # "similarity" 또는 "mmr" (F2014)
+case_candidates = 10     # 유사 사례 후보 수
+case_max = 5             # 근거로 넣을 유사 사례 최대 수
+
+[web]
+# 외부 문서를 가져올 수 있는 호스트. 이 밖으로는 요청하지 않는다(리다이렉트 포함).
+allowed_hosts = ["ko.wikipedia.org", "science.nasa.gov", "www.climate.gov", "www.ipcc.ch", "www.weather.go.kr"]
+
 [chroma]
 persist_dir = "data/chroma"
 embed_batch = 500        # 임베딩 요청 1회에 보내는 문서 수

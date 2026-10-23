@@ -13,3 +13,4 @@ streamlit==1.62.0
 requests==2.34.2
 python-dotenv==1.2.3
 typing-extensions==4.16.0
+pypdf==5.4.0
