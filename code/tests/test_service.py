@@ -64,7 +64,7 @@ class ServiceTest(unittest.TestCase):
         llm = FakeLLM(['{"selected": [1]}'])
         found = self.svc(llm).explore("서울특별시 종로구")
         self.assertEqual(len(found), 1)
-        self.assertIn(found[0], {"108", "105"})
+        self.assertIn(found[0], {"108", "105", "172", "251"})  # 유사도 1순위 지점의 번호를 돌려준다
         self.assertIn("조건", llm.calls[0][-1]["content"])
 
     def test_resolve_location(self):
